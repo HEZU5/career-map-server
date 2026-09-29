@@ -1,0 +1,42 @@
+# Render Blueprint — Deploy cả app + PostgreSQL bằng một lần click.
+# Cách dùng: đẩy repo này lên GitHub rồi ở Render chọn
+# "New + → Blueprint" và trỏ tới repo (hoặc "Connection → Deploy hook").
+databases:
+  - name: career-map
+    databaseName: career_map
+    user: careermap
+    plan: free
+    region: singapore
+
+services:
+  - type: web
+    name: career-map-server
+    runtime: buildpack
+    plan: free
+    region: singapore
+    buildCommand: chmod +x mvnw && ./mvnw package -DskipTests
+    startCommand: java -jar target/career-map-server-0.0.1.jar
+    healthCheckPath: /api/rooms
+    envVars:
+      # Tự nạp thông tin PostgreSQL Render cấp vào app (có default cho local ở
+      # application.properties, nên không khai thêm gì ở đây).
+      - key: PGHOST
+        fromDatabase:
+          name: career-map
+          property: host
+      - key: PGPORT
+        fromDatabase:
+          name: career-map
+          property: port
+      - key: PGDATABASE
+        fromDatabase:
+          name: career-map
+          property: database
+      - key: PGUSER
+        fromDatabase:
+          name: career-map
+          property: user
+      - key: PGPASSWORD
+        fromDatabase:
+          name: career-map
+          property: password

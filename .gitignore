@@ -1,0 +1,21 @@
+# Build outputs
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Logs
+*.log
+
+# Maven wrapper jar được tải xuống khi chạy — không commit
+.mvn/wrapper/maven-wrapper.jar
+
+# Hệ điều hành
+.DS_Store
+Thumbs.db
