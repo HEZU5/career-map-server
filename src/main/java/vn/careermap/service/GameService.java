@@ -83,19 +83,24 @@ public class GameService {
       throw new PlayerLeftException(player.getPlayerKey());
     }
     Room room = player.getRoom();
-    // Giai đoạn quyết định thứ tự: tung KHÔNG theo lượt, ai cũng tung được.
-    if (room != null && room.isActive() && !room.isOrderPhase()) {
+    boolean inActiveRoom = room != null && room.isActive();
+    // MỌI lần tung đều theo lượt, kể cả giai đoạn quyết định thứ tự: mỗi
+    // người lần lượt tung một xúc xắc nên không còn cảnh nhiều người chen
+    // nhau tung cùng lúc (server từ chối người không tới lượt).
+    if (inActiveRoom) {
       ensureTurn(room, player);
       // Lượt đang bận: đã tung xong nhưng chưa trả lời/giải quyết ô đích →
       // chặn tung tiếp để không bỏ qua bước bắt buộc của người chơi.
-      ensureTurnNotBusy(room);
+      if (!room.isOrderPhase()) {
+        ensureTurnNotBusy(room);
+      }
     }
 
     int value = dice.nextInt(6) + 1;
 
     // Giai đoạn quyết định thứ tự lượt: tung KHÔNG di chuyển, chỉ ghi điểm
     // của từng người; ai cao nhất sẽ đi trước khi giai đoạn khép lại.
-    if (room != null && room.isActive() && room.isOrderPhase()) {
+    if (inActiveRoom && room.isOrderPhase()) {
       if (player.isOrderRolled()) {
         throw new ResponseStatusException(
             HttpStatus.BAD_REQUEST, "Bạn đã tung xúc xắc quyết định thứ tự rồi.");

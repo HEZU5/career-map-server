@@ -159,9 +159,12 @@ public class RoomService {
 
     int index = players.indexOf(player);
     if (room.isOrderPhase()) {
-      // Giai đoạn quyết định thứ tự (không xoay lượt): chỉ cần kiểm tra
-      // xem mọi người còn lại đã tung đủ chưa, đủ thì khép giai đoạn.
-      room.finalizeIfOrderComplete();
+      // Giai đoạn quyết định thứ tự đi LẦN LƯỢT: nếu mọi người còn lại đã
+      // tung đủ thì khép giai đoạn; nếu chưa và người rời đang giữ lượt tung
+      // thì nhường lượt cho người kế tiếp chưa tung.
+      if (!room.finalizeIfOrderComplete() && room.getActivePlayerIndex() == index) {
+        room.advanceToNextOrderRoller();
+      }
     } else if (room.getActivePlayerIndex() == index) {
       room.setPendingAnswer(false);
       room.setLastDice(null);

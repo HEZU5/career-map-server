@@ -93,13 +93,34 @@ public class Room {
     activePlayerIndex = next;
   }
 
-  /** Ghi nhận kết quả tung quyết định thứ tự (KHÔNG theo lượt — ai tới cũng
-   *  tự tung được) và kết thúc giai đoạn nếu mọi người (còn trong trận) đã
-   *  tung. Trả true khi giai đoạn kết thúc. */
+  /** Ghi nhận kết quả tung quyết định thứ tự theo LƯỢT (mỗi người lần lượt
+   *  tung, không ai chen được của ai) và kết thúc giai đoạn nếu mọi người
+   *  (còn trong trận) đã tung. Trả true khi giai đoạn kết thúc. */
   public boolean rollOrder(Player roller, int diceValue) {
     roller.setOrderRolled(true);
     roller.setOrderDice(diceValue);
-    return finalizeIfOrderComplete();
+    boolean done = finalizeIfOrderComplete();
+    if (!done) {
+      advanceToNextOrderRoller();
+    }
+    return done;
+  }
+
+  /** Chuyển `activePlayerIndex` sang người kế tiếp chưa tung quyết định thứ
+   *  tự (bỏ qua người đã rời phòng), để giai đoạn thứ tự đi lần lượt. */
+  public void advanceToNextOrderRoller() {
+    if (players.isEmpty()) {
+      activePlayerIndex = 0;
+      return;
+    }
+    int next = activePlayerIndex;
+    for (int i = 0; i < players.size(); i++) {
+      next = (next + 1) % players.size();
+      if (!players.get(next).isLeft() && !players.get(next).isOrderRolled()) {
+        activePlayerIndex = next;
+        return;
+      }
+    }
   }
 
   /** Ai cao nhất đi trước; hoà thì người vào phòng trước được trước. */
