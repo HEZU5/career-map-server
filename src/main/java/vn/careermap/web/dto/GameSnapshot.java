@@ -12,6 +12,8 @@ public record GameSnapshot(
     boolean pendingAnswer,
     boolean orderPhase,
     Integer lastDice,
+    long rollId,
+    String lastRollerKey,
     List<GamePlayerInfo> players) {
 
   public record GamePlayerInfo(

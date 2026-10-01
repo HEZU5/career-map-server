@@ -1,42 +1,38 @@
-# Render Blueprint — Deploy cả app + PostgreSQL bằng một lần click.
-# Cách dùng: đẩy repo này lên GitHub rồi ở Render chọn
-# "New + → Blueprint" và trỏ tới repo (hoặc "Connection → Deploy hook").
-databases:
-  - name: career-map
-    databaseName: career_map
-    user: careermap
-    plan: free
-    region: singapore
+# Render Blueprint cho backend career-map-server.
+# Cách dùng: đẩy repo lên GitHub rồi ở Render chọn
+# "New + → Blueprint" và trỏ tới repo này (branch main).
+#
+# LƯU Ý: Render KHÔNG có runtime Java native (chỉ Node/Python/Ruby/Go/Rust/
+# Elixir), nên service chạy bằng Docker qua Dockerfile ở gốc repo.
+# Database dùng Neon (không tạo Postgres của Render nữa).
 
 services:
   - type: web
     name: career-map-server
-    runtime: buildpack
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: free
     region: singapore
-    buildCommand: chmod +x mvnw && ./mvnw package -DskipTests
-    startCommand: java -jar target/career-map-server-0.0.1.jar
-    healthCheckPath: /api/rooms
+    autoDeploy: true
+    healthCheckPath: /health
     envVars:
-      # Tự nạp thông tin PostgreSQL Render cấp vào app (có default cho local ở
-      # application.properties, nên không khai thêm gì ở đây).
+      # Thông tin Neon (https://console.neon.tech → Connection details).
+      # sync: false → Render hỏi giá trị lúc tạo service và KHÔNG lưu vào git.
+      # Dùng host dạng pooler: <project>-pooler.<region>.aws.neon.tech
       - key: PGHOST
-        fromDatabase:
-          name: career-map
-          property: host
+        sync: false
       - key: PGPORT
-        fromDatabase:
-          name: career-map
-          property: port
+        sync: false
       - key: PGDATABASE
-        fromDatabase:
-          name: career-map
-          property: database
+        sync: false
       - key: PGUSER
-        fromDatabase:
-          name: career-map
-          property: user
+        sync: false
       - key: PGPASSWORD
-        fromDatabase:
-          name: career-map
-          property: password
+        sync: false
+      # Neon bắt buộc SSL.
+      - key: PGSSLMODE
+        value: require
+      # Tuỳ chọn: bỏ comment nếu đổi tên miền Firebase Hosting.
+      # Mặc định trong application.properties đã gồm domain hiện tại.
+      # - key: CORS_ALLOWED_ORIGINS
+      #   sync: false

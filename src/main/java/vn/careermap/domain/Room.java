@@ -47,6 +47,16 @@ public class Room {
 
   private Integer lastDice;
 
+  /** Đếm số lần tung trong ván — client dùng làm "rollId" để nhận biết lần
+   *  tung MỚI (mọi người chơi đều thấy cùng kết quả, không phải chỉ người
+   *  tung nhận được). */
+  @Column(nullable = false, columnDefinition = "bigint not null default 0")
+  private long rollId;
+
+  /** Key người vừa tung (để client gắn avatar + tên vào thông báo kết quả). */
+  @Column(name = "last_roller_key", length = 64)
+  private String lastRollerKey;
+
   @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
   @OrderBy("playOrder ASC, joinOrder ASC")
   private List<Player> players = new ArrayList<>();
@@ -170,6 +180,21 @@ public class Room {
 
   public void setLastDice(Integer lastDice) {
     this.lastDice = lastDice;
+  }
+
+  public long getRollId() {
+    return rollId;
+  }
+
+  public String getLastRollerKey() {
+    return lastRollerKey;
+  }
+
+  /** Ghi nhận 1 lần tung: tăng `rollId` + lưu ai vừa tung. */
+  public void recordRoll(String rollerKey, int diceValue) {
+    this.rollId++;
+    this.lastRollerKey = rollerKey;
+    this.lastDice = diceValue;
   }
 
   public List<Player> getPlayers() {

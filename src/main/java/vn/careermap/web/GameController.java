@@ -1,6 +1,5 @@
 package vn.careermap.web;
 
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,10 +20,8 @@ import vn.careermap.web.dto.WinnerResponse;
 
 @RestController
 @RequestMapping("/api")
-// Bật CORS cho bản web (flutter run -d chrome/edge): browser gửi POST
-// roll/answer từ origin khác, nếu thiếu header này REST bị chặn → server
-// không nhận nước đi → không broadcast → mất đồng bộ.
-@CrossOrigin(origins = "*")
+// CORS được cấu hình TẬP TRUNG ở CorsConfig (không dùng @CrossOrigin "*" nữa)
+// để bản deploy chỉ cho đúng origin Firebase Hosting + dev localhost.
 public class GameController {
   private final GameService gameService;
 

@@ -54,6 +54,10 @@ public class Player {
   @Column(name = "play_order", nullable = false, columnDefinition = "integer not null default 0")
   private int playOrder;
 
+  /** Số vòng cờ đã hoàn thành (đi qua START = ô 0). */
+  @Column(name = "completed_laps", nullable = false, columnDefinition = "integer not null default 0")
+  private int completedLaps;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "room_id")
   private Room room;
@@ -76,6 +80,7 @@ public class Player {
     player.orderRolled = false;
     player.orderDice = 0;
     player.playOrder = 0;
+    player.completedLaps = 0;
     return player;
   }
 
@@ -160,6 +165,14 @@ public class Player {
 
   public int getPlayOrder() {
     return playOrder;
+  }
+
+  public int getCompletedLaps() {
+    return completedLaps;
+  }
+
+  public void addCompletedLaps(int laps) {
+    this.completedLaps += laps;
   }
 
   public void setPlayOrder(int playOrder) {

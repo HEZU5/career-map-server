@@ -34,6 +34,8 @@ public class GameSnapshotBuilder {
         room.isPendingAnswer(),
         room.isOrderPhase(),
         room.getLastDice(),
+        room.getRollId(),
+        room.getLastRollerKey(),
         players);
   }
 

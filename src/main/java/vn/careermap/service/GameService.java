@@ -15,6 +15,7 @@ import vn.careermap.domain.Score;
 import vn.careermap.domain.TileType;
 import vn.careermap.exception.NotYourTurnException;
 import vn.careermap.exception.PlayerLeftException;
+import vn.careermap.exception.TurnBusyException;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.AnswerRequest;
 import vn.careermap.web.dto.AnswerResponse;
@@ -29,17 +30,37 @@ import vn.careermap.web.dto.WinnerResponse;
 
 @Service
 public class GameService {
-  private static final int PATH_SIZE = 32;
   private static final int WIN_ANSWERS = 12;
 
+  /** Vòng cờ 53 ô khớp 1:1 với `Board game_new.jpg` (thứ tự đi clockwise theo
+   *  HƯỚNG ĐÃ CỐ ĐỊNH -1 của client):
+   *  START(0) → 52 → 51 → ... → 43 → 42(góc dưới-phải) → 41 → ... → 34
+   *  → 33(góc trên-phải) → 32 → ... → 13 → 12(góc trên-trái) → 11 → ... → 4
+   *  → 3(góc dưới-trái) → 2 → 1 → START. Cạnh dưới chạy từ PHẢI SANG TRÁI
+   *  đúng mũi tên `<<<<` — quân đi ngược index, không đổi mảng.
+   *  24 ô RIASEC (mỗi nhóm 4), 10 CƠ HỘI, 7 THỬ THÁCH (gồm 4 góc),
+   *  11 ô ⭐ trang trí, 1 START. Không còn ô FINISH. */
   private static final List<TileType> PATH = List.of(
-      TileType.START, TileType.R, TileType.CHANCE, TileType.I, TileType.A,
-      TileType.CHALLENGE, TileType.S, TileType.E, TileType.CHANCE, TileType.C,
-      TileType.R, TileType.I, TileType.A, TileType.CHALLENGE, TileType.S,
-      TileType.E, TileType.CHANCE, TileType.C, TileType.R, TileType.I,
-      TileType.A, TileType.CHALLENGE, TileType.S, TileType.E, TileType.CHANCE,
-      TileType.C, TileType.R, TileType.I, TileType.A, TileType.CHALLENGE,
-      TileType.S, TileType.FINISH);
+      // Cạnh dưới + góc dưới-trái (0..3)
+      TileType.START, TileType.CHANCE, TileType.R, TileType.CHALLENGE,
+      // Cạnh trái (4..11)
+      TileType.I, TileType.CHANCE, TileType.A, TileType.STAR,
+      TileType.S, TileType.CHANCE, TileType.E, TileType.STAR,
+      // Góc trên-trái + cạnh trên (12..32)
+      TileType.CHALLENGE, TileType.C, TileType.CHANCE, TileType.R,
+      TileType.STAR, TileType.I, TileType.CHALLENGE, TileType.A,
+      TileType.STAR, TileType.S, TileType.CHANCE, TileType.E,
+      TileType.STAR, TileType.C, TileType.CHALLENGE, TileType.R,
+      TileType.STAR, TileType.I, TileType.CHANCE, TileType.A,
+      TileType.STAR,
+      // Góc trên-phải + cạnh phải (33..41)
+      TileType.CHALLENGE, TileType.S, TileType.CHANCE, TileType.E,
+      TileType.STAR, TileType.C, TileType.CHANCE, TileType.R,
+      TileType.STAR,
+      // Góc dưới-phải + cuối cạnh dưới (42..52)
+      TileType.CHALLENGE, TileType.I, TileType.CHANCE, TileType.A,
+      TileType.STAR, TileType.S, TileType.CHALLENGE, TileType.E,
+      TileType.STAR, TileType.C, TileType.CHANCE);
 
   private final PlayerRepository playerRepository;
   private final GameBroadcaster broadcaster;
@@ -65,6 +86,9 @@ public class GameService {
     // Giai đoạn quyết định thứ tự: tung KHÔNG theo lượt, ai cũng tung được.
     if (room != null && room.isActive() && !room.isOrderPhase()) {
       ensureTurn(room, player);
+      // Lượt đang bận: đã tung xong nhưng chưa trả lời/giải quyết ô đích →
+      // chặn tung tiếp để không bỏ qua bước bắt buộc của người chơi.
+      ensureTurnNotBusy(room);
     }
 
     int value = dice.nextInt(6) + 1;
@@ -76,17 +100,26 @@ public class GameService {
         throw new ResponseStatusException(
             HttpStatus.BAD_REQUEST, "Bạn đã tung xúc xắc quyết định thứ tự rồi.");
       }
-      room.setLastDice(value);
+      room.recordRoll(player.getPlayerKey(), value);
       room.rollOrder(player, value);
       broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
       return new DiceResponse(value, player.getCurrentPosition());
     }
 
-    int next = Math.min(player.getCurrentPosition() + value, PATH_SIZE - 1);
+    // Di chuyển theo số ô theo HƯỚNG CỐ ĐỊNH (client `BoardDefinition.direction`
+    // = -1): quân đi NGƯỢC index (START → 52 → 51 → ... → 1), đúng mũi tên
+    // `<<<<` cạnh dưới. Đi ngược qua ô 0 (raw < 0) là hoàn thành thêm 1 vòng
+    // cờ — vị trí quay về trong [0, 52] và completedLaps tăng tương ứng.
+    int pos = player.getCurrentPosition();
+    int raw = pos - value;
+    int next = Math.floorMod(raw, PATH.size());
     player.setCurrentPosition(next);
+    if (raw < 0) {
+      player.addCompletedLaps(1);
+    }
 
     if (room != null && room.isActive()) {
-      room.setLastDice(value);
+      room.recordRoll(player.getPlayerKey(), value);
       boolean needsAnswer = needsAnswerAt(next);
       room.setPendingAnswer(needsAnswer);
       if (!needsAnswer) {
@@ -159,8 +192,9 @@ public class GameService {
   @Transactional(readOnly = true)
   public WinnerResponse checkWinner(WinnerRequest request) {
     Player player = resolvePlayer(request.playerId());
+    // Đã đi qua START (≥ 1 vòng) và trả lời đủ câu hỏi RIASEC.
     boolean eligible =
-        player.getCurrentPosition() == PATH_SIZE - 1 && player.getTotalAnswered() >= WIN_ANSWERS;
+        player.getCompletedLaps() >= 1 && player.getTotalAnswered() >= WIN_ANSWERS;
     return new WinnerResponse(eligible, player.getTotalAnswered(), player.getCurrentPosition());
   }
 
@@ -182,7 +216,8 @@ public class GameService {
 
   private boolean needsAnswerAt(int position) {
     TileType type = PATH.get(position);
-    return type != TileType.START && type != TileType.FINISH;
+    // START và ⭐ trang trí: không rút thẻ — server tự đổi lượt ngay.
+    return type != TileType.START && type != TileType.STAR;
   }
 
   private void ensureTurn(Room room, Player player) {
@@ -196,6 +231,13 @@ public class GameService {
     }
     if (index != room.getActivePlayerIndex()) {
       throw new NotYourTurnException(room.getCode());
+    }
+  }
+
+  /** Chặn tung khi lượt hiện tại đang chờ trả lời ô đích. */
+  private void ensureTurnNotBusy(Room room) {
+    if (room.isPendingAnswer()) {
+      throw new TurnBusyException(room.getCode());
     }
   }
 
