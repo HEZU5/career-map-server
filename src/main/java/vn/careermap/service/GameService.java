@@ -108,7 +108,7 @@ public class GameService {
       room.recordRoll(player.getPlayerKey(), value);
       room.rollOrder(player, value);
       broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
-      return new DiceResponse(value, player.getCurrentPosition());
+      return new DiceResponse(value, player.getCurrentPosition(), false);
     }
 
     // Di chuyển theo số ô theo HƯỚNG CỐ ĐỊNH (client `BoardDefinition.direction`
@@ -132,7 +132,7 @@ public class GameService {
       }
       broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
     }
-    return new DiceResponse(value, next);
+    return new DiceResponse(value, next, true);
   }
 
   @Transactional(readOnly = true)
