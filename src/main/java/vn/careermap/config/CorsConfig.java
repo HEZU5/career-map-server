@@ -39,5 +39,17 @@ public class CorsConfig implements WebMvcConfigurer {
         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
         .allowedHeaders("*")
         .maxAge(3600);
+
+    // /health PHẢI có CORS: client web gọi endpoint này để đánh thức Render
+    // (free plan ngủ sau ~15 phút, cold start 30–90s) trước khi gọi API thật.
+    // Không khai báo ở đây thì trình duyệt chặn bằng CORS và việc đánh thức
+    // không bao giờ thành công (PowerShell/curl không gửi Origin nên vẫn thấy
+    // HTTP 200 — dễ bị tưởng là đã ổn).
+    registry
+        .addMapping("/health")
+        .allowedOriginPatterns(allowedOrigins)
+        .allowedMethods("GET", "OPTIONS")
+        .allowedHeaders("*")
+        .maxAge(3600);
   }
 }

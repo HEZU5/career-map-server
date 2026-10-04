@@ -58,4 +58,30 @@ class CorsConfigTest {
                 .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET"))
         .andExpect(status().isForbidden());
   }
+
+  /**
+   * /health phải trả ACAO: client web gọi endpoint này để đánh thức Render sau
+   * khi free plan ngủ. Thiếu header này thì trình duyệt chặn bằng CORS và việc
+   * đánh thức không bao giờ thành công — mà lệnh curl không gửi Origin nên vẫn
+   * thấy HTTP 200, rất dễ bị bỏ sót.
+   */
+  @Test
+  void healthEndpointSendsCorsHeaderForFirebaseOrigin() throws Exception {
+    mvc.perform(
+            options("/health")
+                .header(HttpHeaders.ORIGIN, FIREBASE_ORIGIN)
+                .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET"))
+        .andExpect(status().isOk())
+        .andExpect(
+            header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, FIREBASE_ORIGIN));
+  }
+
+  @Test
+  void healthEndpointRejectsUnknownOrigin() throws Exception {
+    mvc.perform(
+            options("/health")
+                .header(HttpHeaders.ORIGIN, "https://evil.example")
+                .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET"))
+        .andExpect(status().isForbidden());
+  }
 }
