@@ -27,6 +27,11 @@ public class Player {
   @Column(nullable = false)
   private String name;
 
+  /** Nhân vật nghề nghiệp đã chọn (ví dụ "Bác sĩ", "Kỹ sư"). Tách khỏi
+   *  [name] vì trước đây chọn nhân vật GHI ĐÈ tên người chơi — mất tên thật. */
+  @Column(name = "character_name", length = 64)
+  private String characterName;
+
   @Column(nullable = false)
   private int currentPosition;
 
@@ -181,6 +186,14 @@ public class Player {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  public String getCharacterName() {
+    return characterName;
+  }
+
+  public void setCharacterName(String characterName) {
+    this.characterName = characterName;
   }
 
   public Room getRoom() {

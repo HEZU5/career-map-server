@@ -63,6 +63,19 @@ public class Room {
   @Column(name = "last_roller_key", length = 64)
   private String lastRollerKey;
 
+  /** Lần cuối phòng có hoạt động (tạo, vào phòng, đổi tên, chọn nhân vật, bấm
+   *  nút…). Hibernate tự cập nhật mỗi lần ghi — nhờ đó {@code RoomCleanupService}
+   *  biết phòng nào bị bỏ hoang để xoá. Phòng cũ chưa có cột này thì lấy
+   *  {@code createdAt} làm mốc. */
+  @Column(name = "updated_at")
+  private Instant updatedAt;
+
+  @jakarta.persistence.PrePersist
+  @jakarta.persistence.PreUpdate
+  void touch() {
+    this.updatedAt = Instant.now();
+  }
+
   @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
   @OrderBy("playOrder ASC, joinOrder ASC")
   private List<Player> players = new ArrayList<>();
@@ -168,6 +181,11 @@ public class Room {
 
   public Instant getCreatedAt() {
     return createdAt;
+  }
+
+  /** Mốc hoạt động gần nhất; phòng cũ chưa có cột này thì lùi về createdAt. */
+  public Instant lastActivityAt() {
+    return updatedAt != null ? updatedAt : createdAt;
   }
 
   public boolean isActive() {

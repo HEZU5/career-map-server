@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import vn.careermap.service.RoomService;
+import vn.careermap.web.dto.CharacterRequest;
 import vn.careermap.web.dto.CreateRoomRequest;
 import vn.careermap.web.dto.GameSnapshot;
 import vn.careermap.web.dto.JoinRoomRequest;
@@ -56,6 +57,15 @@ public class RoomController {
       @PathVariable String playerKey,
       @RequestBody RenameRequest request) {
     return roomService.rename(code, playerKey, request.name());
+  }
+
+  /** Chọn nhân vật: lưu riêng, KHÔNG ghi đè tên người chơi. */
+  @PutMapping("/{code}/players/{playerKey}/character")
+  public RoomResponse pickCharacter(
+      @PathVariable String code,
+      @PathVariable String playerKey,
+      @RequestBody CharacterRequest request) {
+    return roomService.pickCharacter(code, playerKey, request.characterName());
   }
 
   @GetMapping("/{code}/snapshot")

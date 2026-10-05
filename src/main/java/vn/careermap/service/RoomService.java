@@ -168,6 +168,28 @@ public class RoomService {
     return response;
   }
 
+  /** Người chơi chọn nhân vật ở phòng chờ. KHÔNG đụng tới tên người chơi —
+   *  trước đây chọn nhân vật gọi hàm này nên tên bị ghi đè. */
+  @Transactional
+  public RoomResponse pickCharacter(
+      String rawCode, String rawPlayerKey, String rawCharacterName) {
+    Room room = findOrThrow(rawCode);
+    if (room.isActive()) {
+      throw new RoomAlreadyStartedException(room.getCode());
+    }
+    String playerKey = rawPlayerKey == null || rawPlayerKey.isBlank() ? "" : rawPlayerKey.trim();
+    String characterName =
+        rawCharacterName == null || rawCharacterName.isBlank() ? null : rawCharacterName.trim();
+    Player player = room.getPlayers().stream()
+        .filter(p -> p.getPlayerKey().equals(playerKey))
+        .findFirst()
+        .orElseThrow(() -> new RoomNotFoundException(playerKey));
+    player.setCharacterName(characterName);
+    RoomResponse response = toResponse(room);
+    broadcaster.roomUpdated(room.getCode(), response);
+    return response;
+  }
+
   /**
    * Người chơi rời phòng/trận.
    * - Phòng CHƯA bắt đầu: xoá hẳn người chơi (không để avatar đen vào trận).
@@ -249,6 +271,7 @@ public class RoomService {
             .map(player -> new PlayerInfo(
                 player.getPlayerKey(),
                 player.getName(),
+                player.getCharacterName(),
                 player.isLeft(),
                 player.isOrderRolled(),
                 player.getOrderDice()))
