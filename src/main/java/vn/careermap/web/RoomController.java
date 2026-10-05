@@ -16,6 +16,7 @@ import vn.careermap.service.RoomService;
 import vn.careermap.web.dto.CreateRoomRequest;
 import vn.careermap.web.dto.GameSnapshot;
 import vn.careermap.web.dto.JoinRoomRequest;
+import vn.careermap.web.dto.OpenRoomResponse;
 import vn.careermap.web.dto.RenameRequest;
 import vn.careermap.web.dto.RoomResponse;
 
@@ -71,5 +72,13 @@ public class RoomController {
   @GetMapping
   public List<RoomResponse> list() {
     return roomService.list();
+  }
+
+  /** Phòng công khai còn mở (chưa bắt đầu, chưa đủ người, mới tạo) — danh
+   *  sách để người chơi tìm và vào. Khác `GET /api/rooms` là bản đầy đủ mọi
+   *  phòng công khai. */
+  @GetMapping("/open")
+  public List<OpenRoomResponse> listOpen() {
+    return roomService.listOpen();
   }
 }

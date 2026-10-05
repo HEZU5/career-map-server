@@ -1,7 +1,11 @@
 package vn.careermap.service;
 
 import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,12 +20,24 @@ import vn.careermap.repo.RoomRepository;
 import vn.careermap.web.dto.CreateRoomRequest;
 import vn.careermap.web.dto.GameSnapshot;
 import vn.careermap.web.dto.JoinRoomRequest;
+import vn.careermap.web.dto.OpenRoomResponse;
 import vn.careermap.web.dto.PlayerInfo;
 import vn.careermap.web.dto.RoomResponse;
 
 @Service
 public class RoomService {
   private static final int MAX_PLAYERS = 4;
+
+  /** Phòng cũ hơn thời gian này coi như bỏ rơi — không hiện trong danh sách
+   *  phòng mở nữa (người tạo phòng thường quên, không ai vào). */
+  private static final Duration OPEN_ROOM_MAX_AGE = Duration.ofHours(2);
+
+  /** Số dòng lấy từ DB rồi mới lọc tiếp (phòng đã đủ người/để lâu bị loại
+   *  sau khi đã vào tận SQL). */
+  private static final int OPEN_ROOM_SCAN = 50;
+
+  /** Số phòng tối đa trả về cho client. */
+  private static final int OPEN_ROOM_LIMIT = 20;
 
   private final RoomRepository roomRepository;
   private final PlayerRepository playerRepository;
@@ -76,6 +92,33 @@ public class RoomService {
   @Transactional
   public List<RoomResponse> list() {
     return roomRepository.findByPrivateRoomFalse().stream().map(this::toResponse).toList();
+  }
+
+  /**
+   * Danh sách phòng công khai CÒN MỞ để người chơi tìm và vào: bỏ phòng
+   * riêng tư, bỏ phòng đã bắt đầu, bỏ phòng đã đủ người, và bỏ phòng cũ quá
+   * {@link #OPEN_ROOM_MAX_AGE} (phòng bỏ rơi sẽ không bao giờ vào nữa).
+   *
+   * <p>Chỉ lấy {@link #OPEN_ROOM_SCAN} dòng mới nhất rồi lọc tiếp trong bộ nhớ —
+   * tránh kéo cả bảng phòng (tích luỹ hàng nghìn dòng) lên app.
+   */
+  @Transactional
+  public List<OpenRoomResponse> listOpen() {
+    return roomRepository
+        .findByPrivateRoomFalseAndActiveFalseOrderByCreatedAtDesc(PageRequest.of(0, OPEN_ROOM_SCAN))
+        .stream()
+        .filter(room -> room.canJoin())
+        .filter(room -> room.getCreatedAt().isAfter(Instant.now().minus(OPEN_ROOM_MAX_AGE)))
+        .limit(OPEN_ROOM_LIMIT)
+        .map(
+            room ->
+                new OpenRoomResponse(
+                    room.getCode(),
+                    room.getHostName(),
+                    room.getPlayers().size(),
+                    MAX_PLAYERS,
+                    room.getCreatedAt()))
+        .toList();
   }
 
   @Transactional(readOnly = true)
