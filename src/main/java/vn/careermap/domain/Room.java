@@ -45,6 +45,12 @@ public class Room {
   @Column(name = "order_phase", nullable = false, columnDefinition = "boolean not null default false")
   private boolean orderPhase;
 
+  /** Phòng RIÊNG TƯ: không xuất hiện trong danh sách phòng công khai
+   *  (GET /api/rooms) nhưng vẫn vào được bằng mã phòng. Phòng công khai
+   *  (false) thì ai cũng thấy trong danh sách. */
+  @Column(name = "is_private", nullable = false, columnDefinition = "boolean not null default false")
+  private boolean privateRoom;
+
   private Integer lastDice;
 
   /** Đếm số lần tung trong ván — client dùng làm "rollId" để nhận biết lần
@@ -61,11 +67,12 @@ public class Room {
   @OrderBy("playOrder ASC, joinOrder ASC")
   private List<Player> players = new ArrayList<>();
 
-  public static Room create(String code, String hostName) {
+  public static Room create(String code, String hostName, boolean privateRoom) {
     Room room = new Room();
     room.code = code;
     room.hostName = hostName;
     room.createdAt = Instant.now();
+    room.privateRoom = privateRoom;
     return room;
   }
 
@@ -193,6 +200,14 @@ public class Room {
 
   public void setOrderPhase(boolean orderPhase) {
     this.orderPhase = orderPhase;
+  }
+
+  public boolean isPrivateRoom() {
+    return privateRoom;
+  }
+
+  public void setPrivateRoom(boolean privateRoom) {
+    this.privateRoom = privateRoom;
   }
 
   public Integer getLastDice() {

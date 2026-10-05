@@ -46,7 +46,7 @@ public class RoomService {
         ? "Người chơi 1"
         : request.hostName().trim();
     String code = generateUniqueCode();
-    Room room = Room.create(code, hostName);
+    Room room = Room.create(code, hostName, Boolean.TRUE.equals(request.isPrivate()));
     room.addPlayer(Player.create("host-" + code, hostName));
     RoomResponse response = toResponse(roomRepository.save(room));
     broadcaster.roomUpdated(code, response);
@@ -71,9 +71,11 @@ public class RoomService {
     return response;
   }
 
+  /** Chỉ trả về phòng CÔNG KHAI. Phòng riêng tư vẫn vào được bằng mã phòng
+   *  nhưng không lộ ra danh sách. */
   @Transactional
   public List<RoomResponse> list() {
-    return roomRepository.findAll().stream().map(this::toResponse).toList();
+    return roomRepository.findByPrivateRoomFalse().stream().map(this::toResponse).toList();
   }
 
   @Transactional(readOnly = true)
@@ -209,6 +211,12 @@ public class RoomService {
                 player.getOrderDice()))
             .toList();
     return new RoomResponse(
-        room.getCode(), room.getHostName(), MAX_PLAYERS, players, room.isActive(), room.getCreatedAt());
+        room.getCode(),
+        room.getHostName(),
+        MAX_PLAYERS,
+        players,
+        room.isActive(),
+        room.getCreatedAt(),
+        room.isPrivateRoom());
   }
 }
