@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,6 +32,23 @@ public class Player {
    *  [name] vì trước đây chọn nhân vật GHI ĐÈ tên người chơi — mất tên thật. */
   @Column(name = "character_name", length = 64)
   private String characterName;
+
+  /** Lần cuối máy người chơi gửi heartbeat (đặt bởi SERVER, không tin client). */
+  @Column(name = "last_seen")
+  private Instant lastSeen;
+
+  /**
+   * Lúc bắt đầu mất kết nối; null khi đang online.
+   *
+   * <p>Mốc này quyết định khi nào lượt bị bỏ qua, nên phải do server tự đặt —
+   * client không được tự khai "tôi offline".
+   */
+  @Column(name = "offline_since")
+  private Instant offlineSince;
+
+  /** Đây là bot thay thế người đã vắng (nhãn để không lẫn với người thật). */
+  @Column(name = "bot", nullable = false, columnDefinition = "boolean not null default false")
+  private boolean bot;
 
   @Column(nullable = false)
   private int currentPosition;
@@ -194,6 +212,74 @@ public class Player {
 
   public void setCharacterName(String characterName) {
     this.characterName = characterName;
+  }
+
+  // ── Hiện diện ───────────────────────────────────────────────────────────────
+
+  public Instant getLastSeen() {
+    return lastSeen;
+  }
+
+  public void setLastSeen(Instant lastSeen) {
+    this.lastSeen = lastSeen;
+  }
+
+  public Instant getOfflineSince() {
+    return offlineSince;
+  }
+
+  public void setOfflineSince(Instant offlineSince) {
+    this.offlineSince = offlineSince;
+  }
+
+  public boolean isBot() {
+    return bot;
+  }
+
+  public void setBot(boolean bot) {
+    this.bot = bot;
+  }
+
+  /**
+   * Suy ra trạng thái hiện diện tại thời điểm {@code now}.
+   *
+   * <p>Chưa từng gửi heartbeat (vừa vào phòng, chờ lần đầu) coi là online để
+   * không biến người mới vào thành "mất kết nối" ngay.
+   */
+  public PresenceStatus presenceAt(Instant now, long offlineDetectS, long awayAfterS) {
+    return presenceAt(now, offlineDetectS, awayAfterS, null);
+  }
+
+  /**
+   * Như trên nhưng có mốc dự phòng cho phòng tạo trước khi có heartbeat.
+   *
+   * <p>Phòng cũ không có cột {@code last_seen} nên nếu coi "chưa có heartbeat =
+   * online" thì chúng sẽ online vĩnh viễn và không bao giờ được dọn. Lấy
+   * {@code room.lastActivityAt()} làm mốc thay thế giải quyết đúng vấn đề này mà
+   * không cần migration dữ liệu.
+   */
+  public PresenceStatus presenceAt(
+      Instant now, long offlineDetectS, long awayAfterS, Instant fallback) {
+    if (left) return PresenceStatus.LEFT;
+    Instant anchor = lastSeen != null ? lastSeen : fallback;
+    if (anchor == null) return PresenceStatus.ONLINE;
+    long seconds = java.time.Duration.between(anchor, now).getSeconds();
+    if (seconds > awayAfterS) return PresenceStatus.AWAY;
+    if (seconds > offlineDetectS) return PresenceStatus.OFFLINE;
+    return PresenceStatus.ONLINE;
+  }
+
+  /** Đã vắng mặt đủ lâu để bỏ qua lượt chưa? */
+  public boolean isAway(Room room, Instant now, long awayAfterS) {
+    return presenceAt(now, Long.MAX_VALUE, awayAfterS, room == null ? null : room.lastActivityAt())
+        == PresenceStatus.AWAY;
+  }
+
+  /** Mất kết nối (chưa tới ngưỡng vắng mặt) — tự động chơi hộ sau
+   *  {@code FAST_AUTO_ROLL_S}. */
+  public boolean isDisconnected(Room room, Instant now, long offlineDetectS) {
+    return presenceAt(now, offlineDetectS, Long.MAX_VALUE, room == null ? null : room.lastActivityAt())
+        == PresenceStatus.OFFLINE;
   }
 
   public Room getRoom() {

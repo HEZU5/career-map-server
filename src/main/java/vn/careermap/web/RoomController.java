@@ -1,7 +1,7 @@
 package vn.careermap.web;
 
-import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,12 +10,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import vn.careermap.service.RoomService;
 import vn.careermap.web.dto.CharacterRequest;
 import vn.careermap.web.dto.CreateRoomRequest;
 import vn.careermap.web.dto.GameSnapshot;
+import vn.careermap.web.dto.HeartbeatResponse;
 import vn.careermap.web.dto.JoinRoomRequest;
 import vn.careermap.web.dto.OpenRoomResponse;
 import vn.careermap.web.dto.RenameRequest;
@@ -73,6 +75,34 @@ public class RoomController {
     return roomService.snapshot(code);
   }
 
+  /**
+   * Chủ phòng đóng phòng — xóa hẳn, báo các máy còn lại qua {@code ROOM_CLOSED}.
+   *
+   * <p>Quyền được kiểm tra ở service (so với {@code ownerKey} lẫn
+   * {@code actingHostKey} khi chủ phòng đang vắng mặt), không tin client.
+   */
+  @DeleteMapping("/{code}")
+  @ResponseStatus(HttpStatus.GONE)
+  public Map<String, String> closeRoom(
+      @PathVariable String code, @RequestParam String playerKey) {
+    roomService.closeRoom(code, playerKey);
+    return Map.of("code", code.toUpperCase().trim(), "closed", "true");
+  }
+
+  /**
+   * Heartbeat: máy người chơi báo còn sống mỗi vài giây.
+   *
+   * <p>Đây là nguồn nhận biết online/offline của hệ thống, vì hạ tầng STOMP ở đây
+   * chỉ đẩy một chiều nên không có sự kiện {@code onDisconnect}. Client gửi mỗi
+   * {@code HEARTBEAT_S}; quá {@code OFFLINE_DETECT_S} không thấy là offline.
+   */
+  @PostMapping("/{code}/heartbeat")
+  public HeartbeatResponse heartbeat(
+      @PathVariable String code, @RequestParam String playerKey) {
+    return roomService.heartbeat(code, playerKey);
+  }
+
+  /** Chủ phòng thoát chủ động = đóng phòng. */
   @DeleteMapping("/{code}/players/{playerKey}")
   public RoomResponse leave(
       @PathVariable String code, @PathVariable String playerKey) {

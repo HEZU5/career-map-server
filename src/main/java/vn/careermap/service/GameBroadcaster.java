@@ -30,6 +30,34 @@ public class GameBroadcaster {
     template.convertAndSend(topic(code), Map.of("type", "GAME", "game", snapshot));
   }
 
+  /**
+   * Chủ phòng đóng phòng: các máy còn lại phải huỷ timer/listener và về trang
+   * chủ, nên gửi một sự kiện riêng thay vì im lặng biến mất.
+   */
+  public void roomClosed(String code, String reason) {
+    template.convertAndSend(topic(code), Map.of("type", "ROOM_CLOSED", "reason", reason));
+  }
+
+  /** Toast mất kết nối / quay lại / chuyển quyền chủ phòng. */
+  public void presence(String code, java.util.List<String> messages) {
+    template.convertAndSend(topic(code), Map.of("type", "PRESENCE", "messages", messages));
+  }
+
+  /**
+   * Phòng chỉ còn đúng 1 người chơi — đề nghị chọn chơi tiếp hoặc kết thúc.
+   */
+  public void soloPlayer(String code, String remainingKey) {
+    template.convertAndSend(
+        topic(code), Map.of("type", "SOLO", "playerKey", remainingKey));
+  }
+
+  /** Ván kết thúc — hiện bảng kết quả. */
+  public void gameFinished(String code, GameSnapshot snapshot, String winnerKey) {
+    template.convertAndSend(
+        topic(code),
+        Map.of("type", "FINISHED", "game", snapshot, "winnerKey", winnerKey == null ? "" : winnerKey));
+  }
+
   private static String topic(String code) {
     return "/topic/rooms/" + code.toUpperCase();
   }
