@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: career-map-db
+    environment:
+      POSTGRES_DB: career_map
+      POSTGRES_USER: careermap
+      POSTGRES_PASSWORD: 123456
+    ports:
+      - "5433:5432"
+    volumes:
+      - career_map_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U careermap -d career_map"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  career_map_pgdata:

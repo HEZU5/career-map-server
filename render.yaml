@@ -1,0 +1,38 @@
+# Render Blueprint cho backend career-map-server.
+# Cách dùng: đẩy repo lên GitHub rồi ở Render chọn
+# "New + → Blueprint" và trỏ tới repo này (branch main).
+#
+# LƯU Ý: Render KHÔNG có runtime Java native (chỉ Node/Python/Ruby/Go/Rust/
+# Elixir), nên service chạy bằng Docker qua Dockerfile ở gốc repo.
+# Database dùng Neon (không tạo Postgres của Render nữa).
+
+services:
+  - type: web
+    name: career-map-server
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      # Thông tin Neon (https://console.neon.tech → Connection details).
+      # sync: false → Render hỏi giá trị lúc tạo service và KHÔNG lưu vào git.
+      # Dùng host dạng pooler: <project>-pooler.<region>.aws.neon.tech
+      - key: PGHOST
+        sync: false
+      - key: PGPORT
+        sync: false
+      - key: PGDATABASE
+        sync: false
+      - key: PGUSER
+        sync: false
+      - key: PGPASSWORD
+        sync: false
+      # Neon bắt buộc SSL.
+      - key: PGSSLMODE
+        value: require
+      # Tuỳ chọn: bỏ comment nếu đổi tên miền Firebase Hosting.
+      # Mặc định trong application.properties đã gồm domain hiện tại.
+      # - key: CORS_ALLOWED_ORIGINS
+      #   sync: false
