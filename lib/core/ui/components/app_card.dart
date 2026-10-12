@@ -43,7 +43,7 @@ class AppCard extends StatelessWidget {
     final (bg, border, shadow) = _resolveStyle(isDark);
 
     Widget card = AnimatedContainer(
-      duration: Motion.fast,
+      duration: AppMotion.fast,
       decoration: BoxDecoration(
         color: color ?? bg,
         borderRadius: BorderRadius.circular(radius),

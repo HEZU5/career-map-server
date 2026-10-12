@@ -1,15 +1,15 @@
 /// Design tokens cho toàn app — nguồn chân lý duy nhất cho màu sắc,
-/// khoảng cách, border radius và đổ bóng.
+/// khoảng cách, border radius, đổ bóng và semantic colors.
 library;
 
 import 'package:flutter/material.dart';
 
+export 'app_motion.dart' show AppMotion;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SPACING — base 4px
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Khoảng cách giữ các element theo thang 4px.
 abstract final class Gap {
   static const double xs = 4;
   static const double sm = 8;
@@ -33,6 +33,7 @@ abstract final class Rad {
   static const double md = 12;
   static const double lg = 16;
   static const double xl = 20;
+  static const double xxl = 24;
   static const double full = 999;
 }
 
@@ -53,18 +54,6 @@ abstract final class Elev {
   static const List<BoxShadow> xl = [
     BoxShadow(color: Color(0x1A000000), blurRadius: 25, offset: Offset(0, 20)),
   ];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ANIMATION DURATIONS
-// ─────────────────────────────────────────────────────────────────────────────
-
-abstract final class Motion {
-  static const Duration fast = Duration(milliseconds: 150);
-  static const Duration normal = Duration(milliseconds: 250);
-  static const Duration slow = Duration(milliseconds: 400);
-  static const Curve bounce = Curves.easeOutBack;
-  static const Curve smooth = Curves.easeInOutCubic;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,6 +111,29 @@ abstract final class AppColors {
   static const Color secondaryButton = Color(0xFFE9A8C8);
   static const Color gold = Color(0xFFF4D03F);
 
+  // ── Semantic extras (consolidated) ──────────────────────────────────
+  static const Color successLight = Color(0xFFE8F5E9);
+  static const Color successDark = Color(0xFF1A3A2A);
+  static const Color warningLight = Color(0xFFFFF3E0);
+  static const Color infoLight = Color(0xFFE3F2FD);
+
+  // ── Dice ────────────────────────────────────────────────────────────
+  static const Color diceBackground = Color(0xFFEDE6F5);
+  static const Color diceBorder = Color(0xFF6A4C93);
+  static const Color dicePip = Color(0xFF4B2B87);
+
+  // ── Resume banner ───────────────────────────────────────────────────
+  static const Color resumeBackground = Color(0xFFE8F5E9);
+  static const Color resumeBackgroundDark = Color(0xFF1A3A2A);
+  static const Color resumeAccent = Color(0xFF4CAF50);
+
+  // ── Debug (dev only) ─────────────────────────────────────────────────
+  static const Color debugStart = Color(0xFFF9A825);
+  static const Color debugStar = Color(0xFF8E24AA);
+  static const Color debugOpportunity = Color(0xFF1E88E5);
+  static const Color debugChallenge = Color(0xFFE53935);
+  static const Color debugRiasec = Color(0xFF00897B);
+
   // ── Legacy (backward compat) ────────────────────────────────────────
   static const Color violet = primaryDark;
   static const Color pink = Color(0xFFF5E1EC);
@@ -132,10 +144,36 @@ abstract final class AppColors {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BREAKPOINTS — responsive thresholds
+// ─────────────────────────────────────────────────────────────────────────────
+
+abstract final class Breakpoints {
+  /// Mobile: < 600px
+  static const double mobile = 600;
+
+  /// Tablet: 600-900px
+  static const double tablet = 900;
+
+  /// Desktop: > 900px
+  static const double desktop = 1200;
+
+  /// Max width for content container
+  static const double contentMaxWidth = 650;
+  static const double contentMaxWidthDesktop = 900;
+
+  /// Rail widths (game screen)
+  static const double railWidthDesktop = 150;
+  static const double railWidthMobile = 64;
+  static const double railWidthCompact = 54;
+
+  /// Rail breakpoint: below this width, use compact rail
+  static const double railCompactBreakpoint = 700;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SEMANTIC HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Trả về màu neutral phù hợp với brightness hiện tại.
 Color neutralSurface(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark
         ? AppColors.darkSurface

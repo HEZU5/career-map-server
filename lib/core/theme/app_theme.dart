@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'tokens.dart';
+export 'app_motion.dart';
 
 /// Theme tập trung duy nhất tại đây.
 /// Light + Dark mode, Be Vietnam Pro, Material 3.

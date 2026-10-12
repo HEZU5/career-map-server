@@ -71,14 +71,15 @@ class _AppButtonState extends State<AppButton> {
     }
 
     return GestureDetector(
+      onTap: isDisabled ? null : widget.onPressed,
       onTapDown: isDisabled ? null : (_) => setState(() => _isPressed = true),
       onTapUp: isDisabled ? null : (_) => setState(() => _isPressed = false),
       onTapCancel: isDisabled ? null : () => setState(() => _isPressed = false),
       child: AnimatedScale(
         scale: _isPressed ? 0.97 : 1.0,
-        duration: Motion.fast,
+        duration: AppMotion.fast,
         child: AnimatedContainer(
-          duration: Motion.fast,
+          duration: AppMotion.fast,
           height: height,
           width: widget.fullWidth ? double.infinity : null,
           padding: padding,

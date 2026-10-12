@@ -90,7 +90,7 @@ class _CharacterCard extends StatelessWidget {
       child: Stack(
         children: [
           AnimatedContainer(
-            duration: Motion.fast,
+            duration: AppMotion.fast,
             width: double.infinity,
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkSurface : AppColors.surface,

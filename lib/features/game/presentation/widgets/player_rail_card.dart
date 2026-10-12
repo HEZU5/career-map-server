@@ -59,9 +59,9 @@ class PlayerRailCard extends StatelessWidget {
   Widget _full(Color color) {
     return AnimatedScale(
       scale: active && !player.left ? 1.04 : 1,
-      duration: Motion.normal,
+      duration: AppMotion.normal,
       child: AnimatedContainer(
-        duration: Motion.normal,
+        duration: AppMotion.normal,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(Rad.lg),
@@ -127,9 +127,9 @@ class PlayerRailCard extends StatelessWidget {
     final tags = _tagStack(color, compact: true);
     return AnimatedScale(
       scale: active && !player.left ? 1.03 : 1,
-      duration: Motion.normal,
+      duration: AppMotion.normal,
       child: AnimatedContainer(
-        duration: Motion.normal,
+        duration: AppMotion.normal,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(Rad.md),
