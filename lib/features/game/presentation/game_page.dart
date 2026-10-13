@@ -388,6 +388,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
         final GameSnapshot? snapshot = event.game;
         if (snapshot != null) _game.applyGameSnapshot(snapshot);
         _game.onFinished(_game.winnerKey);
+        _showResultScreen();
     }
   }
 
@@ -599,13 +600,31 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
         _openChallenge(game);
       case OpportunityTile():
         _openOpportunity(game);
-      case StartTile():
       case StarTile():
-        // START / ⭐ trang trí: không rút thẻ, chỉ dừng lại. Online server đã
-        // tự đổi lượt; offline hiện nút "LƯỢT TIẾP" trong ô điều khiển.
+        // ⭐ Ngôi sao: +1 điểm chiến thắng.
+        _openStarBonus(game);
+      case StartTile():
+        // START: không rút thẻ, chỉ dừng lại.
         if (!game.online) setState(() {});
         _clearCard();
     }
+  }
+
+  void _openStarBonus(GameController game) {
+    _openCard(
+      () => _BonusCard(
+        controller: game,
+        title: 'NGÔI SAO ⭐',
+        body: 'Bạn dừng lại ở ngôi sao may mắn! Nhận +1 Điểm Chiến thắng.',
+        acceptLabel: 'Nhận +1',
+        onAccept: () async {
+          final award = await game.answerBonusCard(winPoints: 1);
+          if (!mounted) return;
+          _clearCard();
+          _showPointAward(award);
+        },
+      ),
+    );
   }
 
   void _openCard(Widget Function() builder) {
@@ -906,6 +925,96 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
     }
   }
 
+  /// Màn hình kết quả — hiển thị điểm RIASEC, mã Holland, QR code thanh toán.
+  void _showResultScreen() {
+    if (!mounted) return;
+    final game = _game;
+    final isWinner = game.winnerKey != null && game.winnerKey == widget.myPlayerKey;
+
+    // Tính mã Holland (nhóm RIASEC có điểm cao nhất)
+    String? topGroup;
+    int topScore = 0;
+    for (final p in game.players) {
+      if (p.id == (widget.myPlayerKey ?? game.myPlayer.id)) {
+        for (final entry in p.scores.entries) {
+          if (entry.value > topScore) {
+            topScore = entry.value;
+            topGroup = entry.key.code;
+          }
+        }
+      }
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(isWinner ? '🎉 Chiến thắng!' : 'Kết quả ván'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (topGroup != null) ...[
+                Text(
+                  'Mã Holland của bạn: $topGroup',
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Điểm cao nhất: $topScore',
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // QR code thanh toán
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Quét QR để xem kết quả chi tiết',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 12),
+                    // Placeholder QR code (thay bằng ảnh QR thật khi có API)
+                    Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.qr_code_2, size: 80, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Thanh toán: 10.000 VND',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            },
+            child: const Text('Về màn hình chính'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Màn báo mất chỗ: không chơi tiếp được nữa, chỉ có đường về lobby.
   Widget _buildLostSeat() {
     return Scaffold(
@@ -1018,9 +1127,9 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
             diceBadgeFor: (p) => p.id == _lastRollerId ? _lastRollerFace : 0,
             leading: [
               RailIconButton(icon: Icons.logout, tooltip: 'Rời trận', onPressed: _confirmQuit),
-              // Người giữ quyền phòng mới thấy nút kết thúc; server tự xác
-              // thực lại khi nhận request nên bấm nhầm cũng vô hại.
-              if (game.amHost && game.roomStatus == RoomStatus.playing)
+              // Nút kết thúc ván — hiển thị cho tất cả người chơi để test.
+              // Server vẫn tự xác thực quyền khi nhận request.
+              if (game.roomStatus == RoomStatus.playing)
                 RailIconButton(
                   icon: Icons.flag_outlined,
                   tooltip: 'Kết thúc ván',
