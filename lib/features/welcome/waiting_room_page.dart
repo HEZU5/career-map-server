@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/storage/session_store.dart';
-import '../../core/theme/app_colors.dart';
+import '../../core/theme/tokens.dart';
+import '../../core/ui/components/app_empty_state.dart';
 import '../game/data/game_api.dart';
 import '../game/data/game_socket.dart';
 import '../game/data/room_api.dart';
@@ -248,33 +249,33 @@ Future<void> _backToMain() async {
           leading: IconButton(icon: const Icon(Icons.close), onPressed: _backToMain),
         ),
         body: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(Gap.xl),
           children: [
             _RoomCodeCard(code: widget.roomCode),
-            const SizedBox(height: 16),
+            const SizedBox(height: Gap.lg),
             Text(
               '${_activePlayers.length}/4 người chơi',
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: AppColors.violet,
+                color: AppColors.primaryDark,
               ),
             ),
             if (widget.isHost)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.only(top: Gap.xs),
                 child: Text(
                   'Bạn bè nhập mã ${widget.roomCode} để tham gia',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.black54),
                 ),
               ),
-            const SizedBox(height: 16),
+            const SizedBox(height: Gap.lg),
             Wrap(
               alignment: WrapAlignment.center,
-              spacing: 12,
-              runSpacing: 12,
+              spacing: Gap.md,
+              runSpacing: Gap.md,
               children: [
                 for (final p in _activePlayers)
                   _PlayerAvatar(
@@ -286,14 +287,14 @@ Future<void> _backToMain() async {
             ),
             if (_activePlayers.isEmpty)
               const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                  'Chưa có ai...',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.black54),
+                padding: EdgeInsets.only(top: Gap.sm),
+                child: AppEmptyState(
+                  icon: Icons.hourglass_empty,
+                  title: 'Chưa có ai...',
+                  description: 'Hãy rủ bạn bè nhập mã phòng để cùng chơi!',
                 ),
               ),
-            const SizedBox(height: 20),
+            const SizedBox(height: Gap.xl),
             if (widget.isHost)
               FilledButton.icon(
                 onPressed: _canStart && !_starting ? _startGame : null,
@@ -312,7 +313,7 @@ Future<void> _backToMain() async {
                 icon: const Icon(Icons.hourglass_empty),
                 label: const Text('Chờ chủ phòng bắt đầu...'),
               ),
-            const SizedBox(height: 8),
+            const SizedBox(height: Gap.sm),
             OutlinedButton.icon(
               onPressed: _backToMain,
               icon: const Icon(Icons.logout),

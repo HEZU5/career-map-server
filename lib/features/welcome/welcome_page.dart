@@ -7,23 +7,65 @@ import '../game/presentation/game_page.dart';
 import 'lobby_page.dart';
 
 /// Màn hình chào — hero animation, value props, CTA nổi bật.
-class WelcomePage extends StatelessWidget {
+class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key, this.session});
 
   final SessionStore? session;
 
+  @override
+  State<WelcomePage> createState() => _WelcomePageState();
+}
+
+class _WelcomePageState extends State<WelcomePage> with TickerProviderStateMixin {
+  late final AnimationController _heroController;
+  late final AnimationController _staggerController;
+  late final AnimationController _pulseController;
+
   static const _heroImage =
       'assets/1789902277973_6125801006513112120_g2379287457738176319_17d447179ad3c98e4ecbe1abab295b45.jpg';
 
+  @override
+  void initState() {
+    super.initState();
+    _heroController = AnimationController(
+      vsync: this,
+      duration: AppMotion.emphasized,
+    )..forward();
+
+    _staggerController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..forward();
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _heroController.dispose();
+    _staggerController.dispose();
+    _pulseController.dispose();
+    super.dispose();
+  }
+
   void _start(BuildContext context) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => LobbyPage(session: session)));
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => LobbyPage(session: widget.session)),
+    );
   }
 
   void _resume(BuildContext context, String roomCode, String playerKey) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            GamePage(roomCode: roomCode, myPlayerKey: playerKey, isOnline: true, session: session),
+        builder: (_) => GamePage(
+          roomCode: roomCode,
+          myPlayerKey: playerKey,
+          isOnline: true,
+          session: widget.session,
+        ),
       ),
     );
   }
@@ -39,100 +81,31 @@ class WelcomePage extends StatelessWidget {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(Gap.xxl),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
+              constraints: const BoxConstraints(maxWidth: Breakpoints.contentMaxWidth),
               child: Column(
                 children: [
-                  // Hero image với gradient overlay
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(Rad.xl),
-                    child: Stack(
-                      children: [
-                        Image.asset(_heroImage),
-                        Positioned(
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          child: Container(
-                            height: 120,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  (isDark ? AppColors.darkPrimary : AppColors.primary)
-                                      .withValues(alpha: 0.8),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          bottom: Gap.lg,
-                          left: Gap.xl,
-                          right: Gap.xl,
-                          child: Text(
-                            'Khám phá bản thân\nĐịnh hướng tương lai',
-                            style: theme.textTheme.headlineMedium?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              height: 1.2,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  // Hero image với fade + scale
+                  _buildHeroImage(isDark),
                   const SizedBox(height: Gap.xxl),
 
-                  // Title
-                  Text(
-                    'HOLLAND\nCAREER EXPLORER',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.displayMedium?.copyWith(
-                      color: isDark ? AppColors.darkPrimary : AppColors.primary,
-                      fontWeight: FontWeight.w800,
-                      height: 1.2,
-                    ),
-                  ),
+                  // Title với fade
+                  _buildTitle(isDark),
                   const SizedBox(height: Gap.lg),
 
-                  // Value props
-                  _ValuePropRow(
-                    icon: Icons.psychology_outlined,
-                    label: 'Khám phá tính cách',
-                    isDark: isDark,
-                  ),
-                  const SizedBox(height: Gap.md),
-                  _ValuePropRow(
-                    icon: Icons.explore_outlined,
-                    label: 'Tìm định hướng nghề',
-                    isDark: isDark,
-                  ),
-                  const SizedBox(height: Gap.md),
-                  _ValuePropRow(
-                    icon: Icons.groups_outlined,
-                    label: 'Chơi cùng bạn bè',
-                    isDark: isDark,
-                  ),
+                  // Value props với staggered reveal
+                  _buildValueProps(isDark),
                   const SizedBox(height: Gap.xxxl),
 
-                  // CTA
-                  AppButton(
-                    label: 'Bắt đầu chơi',
-                    onPressed: () => _start(context),
-                    icon: Icons.play_arrow_rounded,
-                    size: AppButtonSize.lg,
-                    fullWidth: true,
-                  ),
+                  // CTA với pulse
+                  _buildCta(),
 
                   // Resume banner
-                  if (session?.activeRoom case final saved?) ...[
+                  if (widget.session?.activeRoom case final saved?) ...[
                     const SizedBox(height: Gap.xl),
                     _ResumeBanner(
                       roomCode: saved.roomCode,
                       onResume: () => _resume(context, saved.roomCode, saved.playerKey),
-                      onForget: session?.clearActiveRoom,
+                      onForget: widget.session?.clearActiveRoom,
                     ),
                   ],
                 ],
@@ -140,6 +113,170 @@ class WelcomePage extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeroImage(bool isDark) {
+    return FadeTransition(
+      opacity: CurvedAnimation(parent: _heroController, curve: AppMotion.enter),
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 0.96, end: 1.0).animate(
+          CurvedAnimation(parent: _heroController, curve: AppMotion.enter),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(Rad.xl),
+          child: Stack(
+            children: [
+              Image.asset(_heroImage),
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 120,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        (isDark ? AppColors.darkPrimary : AppColors.primary)
+                            .withValues(alpha: 0.8),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: Gap.lg,
+                left: Gap.xl,
+                right: Gap.xl,
+                child: Text(
+                  'Khám phá bản thân\nĐịnh hướng tương lai',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTitle(bool isDark) {
+    return FadeTransition(
+      opacity: CurvedAnimation(
+        parent: _staggerController,
+        curve: const Interval(0.0, 0.4, curve: AppMotion.enter),
+      ),
+      child: Text(
+        'HOLLAND\nCAREER EXPLORER',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.displayMedium?.copyWith(
+          color: isDark ? AppColors.darkPrimary : AppColors.primary,
+          fontWeight: FontWeight.w800,
+          height: 1.2,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildValueProps(bool isDark) {
+    return Column(
+      children: [
+        _StaggeredItem(
+          controller: _staggerController,
+          index: 0,
+          child: _ValuePropRow(
+            icon: Icons.psychology_outlined,
+            label: 'Khám phá tính cách',
+            isDark: isDark,
+          ),
+        ),
+        const SizedBox(height: Gap.md),
+        _StaggeredItem(
+          controller: _staggerController,
+          index: 1,
+          child: _ValuePropRow(
+            icon: Icons.explore_outlined,
+            label: 'Tìm định hướng nghề',
+            isDark: isDark,
+          ),
+        ),
+        const SizedBox(height: Gap.md),
+        _StaggeredItem(
+          controller: _staggerController,
+          index: 2,
+          child: _ValuePropRow(
+            icon: Icons.groups_outlined,
+            label: 'Chơi cùng bạn bè',
+            isDark: isDark,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCta() {
+    return AnimatedBuilder(
+      animation: _pulseController,
+      builder: (context, child) {
+        final scale = 1.0 + (_pulseController.value * 0.02);
+        return Transform.scale(
+          scale: scale,
+          child: child,
+        );
+      },
+      child: AppButton(
+        label: 'Bắt đầu chơi',
+        onPressed: () => _start(context),
+        icon: Icons.play_arrow_rounded,
+        size: AppButtonSize.lg,
+        fullWidth: true,
+      ),
+    );
+  }
+}
+
+/// Staggered reveal — trượt từ dưới lên 12px + fade, delay 80ms/dòng.
+class _StaggeredItem extends StatelessWidget {
+  const _StaggeredItem({
+    required this.controller,
+    required this.index,
+    required this.child,
+  });
+
+  final AnimationController controller;
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final delay = index * 0.15;
+    final start = 0.2 + delay;
+    final end = start + 0.3;
+
+    return FadeTransition(
+      opacity: CurvedAnimation(
+        parent: controller,
+        curve: Interval(start, end.clamp(0.0, 1.0), curve: AppMotion.enter),
+      ),
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.1),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: controller,
+            curve: Interval(start, end.clamp(0.0, 1.0), curve: AppMotion.enter),
+          ),
+        ),
+        child: child,
       ),
     );
   }
@@ -206,7 +343,7 @@ class _ResumeBannerState extends State<_ResumeBanner> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Material(
-      color: isDark ? const Color(0xFF1A3A2A) : const Color(0xFFE8F5E9),
+      color: isDark ? AppColors.resumeBackgroundDark : AppColors.resumeBackground,
       borderRadius: BorderRadius.circular(Rad.lg),
       child: Padding(
         padding: const EdgeInsets.all(Gap.lg),
