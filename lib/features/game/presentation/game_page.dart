@@ -16,6 +16,7 @@ import '../data/career_cards.dart';
 import '../data/game_api.dart';
 import '../data/game_socket.dart';
 import '../data/room_api.dart';
+import '../data/vietqr_service.dart';
 import '../domain/board.dart';
 import '../domain/game_room.dart';
 import '../domain/player.dart';
@@ -925,6 +926,21 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
     }
   }
 
+  /// Kết thúc ngay lập tức — dùng để test chiến thắng.
+  /// Chọn người có điểm chiến thắng cao nhất làm winner.
+  Future<void> _forceFinish() async {
+    // Tìm người có winPoints cao nhất
+    String? bestKey;
+    int bestScore = -1;
+    for (final p in _game.players) {
+      if (p.winPoints > bestScore) {
+        bestScore = p.winPoints;
+        bestKey = p.id;
+      }
+    }
+    await _game.finishGame(bestKey);
+  }
+
   /// Màn hình kết quả — hiển thị điểm RIASEC, mã Holland, QR code thanh toán.
   void _showResultScreen() {
     if (!mounted) return;
@@ -945,6 +961,27 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
       }
     }
 
+    // Gọi API VietQR tạo QR thanh toán
+    final vietQr = VietQrService();
+    vietQr.generateQr(amount: 10000).then((result) {
+      if (!mounted) return;
+      vietQr.dispose();
+      _showResultDialog(context, isWinner, topGroup, topScore, result.imageBytes);
+    }).catchError((e) {
+      vietQr.dispose();
+      if (!mounted) return;
+      // Fallback: hiện QR placeholder nếu API lỗi
+      _showResultDialog(context, isWinner, topGroup, topScore, null);
+    });
+  }
+
+  void _showResultDialog(
+    BuildContext context,
+    bool isWinner,
+    String? topGroup,
+    int topScore,
+    Uint8List? qrBytes,
+  ) {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -981,16 +1018,17 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                     ),
                     const SizedBox(height: 12),
-                    // Placeholder QR code (thay bằng ảnh QR thật khi có API)
-                    Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
+                    if (qrBytes != null)
+                      Image.memory(qrBytes, width: 120, height: 120)
+                    else
+                      Container(
+                        width: 120,
+                        height: 120,
+                        color: Colors.grey.shade200,
+                        child: const Center(
+                          child: Text('QR lỗi', style: TextStyle(color: Colors.grey)),
+                        ),
                       ),
-                      child: const Icon(Icons.qr_code_2, size: 80, color: Colors.grey),
-                    ),
                     const SizedBox(height: 8),
                     const Text(
                       'Thanh toán: 10.000 VND',
@@ -1127,14 +1165,19 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin, Widg
             diceBadgeFor: (p) => p.id == _lastRollerId ? _lastRollerFace : 0,
             leading: [
               RailIconButton(icon: Icons.logout, tooltip: 'Rời trận', onPressed: _confirmQuit),
-              // Nút kết thúc ván — hiển thị cho tất cả người chơi để test.
-              // Server vẫn tự xác thực quyền khi nhận request.
-              if (game.roomStatus == RoomStatus.playing)
+              // Nút kết thúc sớm — cho phép test chiến thắng ngay.
+              if (game.roomStatus == RoomStatus.playing) ...[
                 RailIconButton(
                   icon: Icons.flag_outlined,
-                  tooltip: 'Kết thúc ván',
+                  tooltip: 'Kết thúc sớm',
                   onPressed: _confirmFinish,
                 ),
+                RailIconButton(
+                  icon: Icons.stop_circle_outlined,
+                  tooltip: 'Kết thúc ngay (test)',
+                  onPressed: _forceFinish,
+                ),
+              ],
               if (BoardGeometry.debugHitbox)
                 RailIconButton(
                   icon: Icons.photo_camera_outlined,

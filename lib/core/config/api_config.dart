@@ -48,4 +48,18 @@ class ApiConfig {
 
   static String _stripTrailingSlash(String url) =>
       url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+
+  // ── VietQR API ──────────────────────────────────────────────────────
+
+  /// VietQR API base URL.
+  static const String vietQrBaseUrl = 'https://api.vietqr.io';
+
+  /// VietQR credentials — truyền qua `--dart-define` khi build.
+  static const String vietQrClientId = String.fromEnvironment('ea36b3ce-02e5-4f32-8324-5535611c1212');
+  static const String vietQrApiKey = String.fromEnvironment('70ec13e0-08f2-4f30-86c7-6ff1f7c303ba');
+
+  /// Thông tin tài khoản nhận tiền (cấu hình một lần).
+  static const String vietQrAccountNo = '113366668888';
+  static const String vietQrAccountName = 'CONG TY CASSO';
+  static const int vietQrAcqId = 970415; // BIN VietQR
 }
