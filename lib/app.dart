@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:flutter/cupertino.dart';
-
 import 'core/storage/session_store.dart';
 import 'core/theme/app_theme.dart';
 import 'features/welcome/welcome_page.dart';
@@ -50,16 +48,6 @@ class CareerMapApp extends StatelessWidget {
             darkTheme: buildAppTheme(brightness: Brightness.dark),
             themeMode: themeProvider.themeMode,
             home: WelcomePage(session: session),
-            pageTransitionsTheme: PageTransitionsTheme(
-              builders: {
-                TargetPlatform.android: const CupertinoPageTransitionsBuilder(),
-                TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
-                TargetPlatform.macOS: const CupertinoPageTransitionsBuilder(),
-                TargetPlatform.windows: const FadeUpwardsPageTransitionsBuilder(),
-                TargetPlatform.linux: const FadeUpwardsPageTransitionsBuilder(),
-                TargetPlatform.fuchsia: const FadeUpwardsPageTransitionsBuilder(),
-              },
-            ),
           );
         },
       ),
