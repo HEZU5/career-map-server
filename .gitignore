@@ -50,3 +50,15 @@ web/
 .firebase/
 firebase.json
 .firebaserc
+
+# Frontend & personal artifacts at root (deploy-only)
+README.md
+assets/
+devtools_options.yaml
+skills-lock.json
+.agents/
+.claude/
+.widget_preview/
+*.jpg
+*.docx
+AGENTS.md
