@@ -1,0 +1,52 @@
+# Build outputs
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Logs
+*.log
+
+# Maven wrapper jar
+.mvn/wrapper/maven-wrapper.jar
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ─── Flutter Frontend (deploy trực tiếp, không qua git) ───
+# Source
+lib/
+test/
+analysis_options.yaml
+
+# Flutter config
+pubspec.yaml
+pubspec.lock
+.metadata
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Build artifacts
+build/
+.dart_tool/
+widget_preview/
+
+# Platform folders
+android/
+ios/
+windows/
+linux/
+macos/
+web/
+
+# Firebase hosting cache
+.firebase/
+firebase.json
+.firebaserc
