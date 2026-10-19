@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import vn.careermap.domain.TurnPhase;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.repo.RoomRepository;
 import vn.careermap.web.dto.FinishRequest;
+import vn.careermap.web.dto.WinnerRequest;
 
 /**
  * Kết thúc ván: SERVER tự chấm người thắng và chỉ chủ phòng mới kết thúc được.
@@ -41,6 +43,10 @@ class GameFinishTest {
   /** Ngưỡng SIẾT hơn mặc định — dùng để chứng minh server đọc ngưỡng từ cấu hình. */
   private static final GameRulesConfig STRICT_RULES =
       new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 3, 30);
+
+  /** Ngưỡng NỚI hơn mặc định — biến môi trường có thể hạ ngưỡng lúc deploy. */
+  private static final GameRulesConfig LOOSE_RULES =
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 4);
 
   /** key -> player, đóng vai "database" cho {@code resolvePlayer}. */
   private final Map<String, Player> byKey = new HashMap<>();
@@ -192,6 +198,94 @@ class GameFinishTest {
     service.finish(new FinishRequest("owner"));
 
     assertThat(room.getWinnerKey()).isEqualTo("guest-1");
+  }
+
+  // ── Ngưỡng thắng: checkWinner và finish phải dùng CHUNG một nguồn ─────────
+
+  @Test
+  void nguongThangCuaCheckWinnerDocTuCauHinh() {
+    // 1 vòng / 12 câu: đủ theo RULES nhưng KHÔNG đủ theo STRICT_RULES (3/30).
+    byKey.put("owner", player("owner", 1, 12));
+    assertThat(gameService(RULES).checkWinner(new WinnerRequest("owner")).eligibleToFinish())
+        .isTrue();
+    assertThat(gameService(STRICT_RULES).checkWinner(new WinnerRequest("owner")).eligibleToFinish())
+        .isFalse();
+
+    // Đổi ngưỡng theo hướng ngược lại (nới xuống 1 vòng / 4 câu).
+    byKey.clear();
+    byKey.put("guest-1", player("guest-1", 1, 4));
+    assertThat(gameService(LOOSE_RULES).checkWinner(new WinnerRequest("guest-1")).eligibleToFinish())
+        .isTrue();
+    assertThat(gameService(RULES).checkWinner(new WinnerRequest("guest-1")).eligibleToFinish())
+        .isFalse();
+  }
+
+  @Test
+  void checkWinnerVaFinishChoCungKetQua() {
+    // `game.win-min-*` là biến môi trường override được lúc deploy. Dù người
+    // chơi gọi endpoint nào, server phải trả lời giống nhau về câu "đủ điều
+    // kiện chưa" — nếu lệch thì client hiện nút kết thúc rồi server lại từ chối.
+    int[][] stats = {{0, 0}, {1, 11}, {1, 12}, {2, 29}, {3, 30}};
+    for (GameRulesConfig rules : List.of(RULES, STRICT_RULES, LOOSE_RULES)) {
+      for (int[] s : stats) {
+        byKey.clear();
+        Room room = room("owner", player("owner", s[0], s[1]));
+        GameService service = gameService(rules);
+
+        boolean eligible = service.checkWinner(new WinnerRequest("owner")).eligibleToFinish();
+        service.finish(new FinishRequest("owner"));
+
+        assertThat(eligible)
+            .as(
+                String.format(
+                    "nguong %d vong / %d cau, nguoi choi %d vong / %d cau",
+                    rules.getWinMinLaps(), rules.getWinMinAnswers(), s[0], s[1]))
+            .isEqualTo("owner".equals(room.getWinnerKey()));
+      }
+    }
+  }
+
+  // ── Người đã rời phòng: đủ ngưỡng cũng không phải người thắng ───────────────
+
+  @Test
+  void nguoiDaRoiPhongDuNguongVanKhongPhaiNguoiThang() {
+    // Đúng đường đi thật: RoomService chỉ setLeft(true), KHÔNG gỡ khỏi
+    // room.getPlayers(), nên người đã rời vẫn đứng đầu danh sách và vẫn giữ
+    // nguyên completedLaps/totalAnswered.
+    Player daRoi = player("guest-1", 1, 12);
+    daRoi.setLeft(true);
+    Room room = room("owner", daRoi, player("owner", 1, 12));
+    GameService service = gameService(RULES);
+
+    service.finish(new FinishRequest("owner"));
+
+    // Người còn lại đủ ngưỡng thì được phong thắng.
+    assertThat(room.getWinnerKey()).isEqualTo("owner");
+  }
+
+  @Test
+  void aiCungDaRoiPhongThiVanKetThucDuocNhungKhongCoNguoiThang() {
+    Player ownerDaRoi = player("owner", 1, 12);
+    ownerDaRoi.setLeft(true);
+    Player guestDaRoi = player("guest-1", 2, 30);
+    guestDaRoi.setLeft(true);
+    Room room = room("owner", ownerDaRoi, guestDaRoi);
+    GameService service = gameService(RULES);
+
+    service.finish(new FinishRequest("owner"));
+
+    assertThat(room.getStatus()).isEqualTo(RoomStatus.FINISHED);
+    assertThat(room.getWinnerKey()).isNull();
+  }
+
+  @Test
+  void nguoiDaRoiKhongDuocBaoDuDieuKien() {
+    Player daRoi = player("guest-1", 1, 12);
+    daRoi.setLeft(true);
+    byKey.put("guest-1", daRoi);
+
+    assertThat(gameService(RULES).checkWinner(new WinnerRequest("guest-1")).eligibleToFinish())
+        .isFalse();
   }
 
   // ── Vòng đời phòng: bắt đầu ván thì phòng chuyển sang PLAYING ────────────

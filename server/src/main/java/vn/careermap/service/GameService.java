@@ -36,7 +36,6 @@ import vn.careermap.web.dto.WinnerResponse;
 @Service
 public class GameService {
   private static final Logger log = LoggerFactory.getLogger(GameService.class);
-  private static final int WIN_ANSWERS = 12;
 
   private final PlayerRepository playerRepository;
   private final GameBroadcaster broadcaster;
@@ -209,21 +208,41 @@ public class GameService {
   }
 
   /**
-   * Người thắng = người ĐẦU TIÊN trong phòng đủ cả hai ngưỡng thắng; không ai
-   * đủ thì {@code null} (ván kết thúc không có thắng).
+   * Người thắng = người ĐẦU TIÊN trong phòng đủ điều kiện; không ai đủ thì
+   * {@code null} (ván kết thúc không có thắng).
    *
    * <p>Thứ tự lấy từ {@link Room#getPlayers()} — {@code @OrderBy("playOrder ASC,
    * joinOrder ASC")} nên đã là thứ tự đi thật (xếp theo xúc xắc, hoà thì người
    * vào phòng trước); không cần sort lại.
+   *
+   * <p>Người đã rời phòng bị loại: {@code RoomService.leave} chỉ set
+   * {@code left = true} mà KHÔNG gỡ khỏi {@code room.getPlayers()}, nên họ vẫn
+   * nằm trong danh sách và vẫn giữ nguyên số vòng/số câu đã đạt. Nếu không loại,
+   * người đã đóng app lúc giữa ván sẽ ôm quyền mở mã QR thanh toán trong khi
+   * người còn lại dù đủ điều kiện cũng không thấy gì.
    */
   private String pickWinner(Room room) {
     for (Player candidate : room.getPlayers()) {
-      if (candidate.getCompletedLaps() >= rules.getWinMinLaps()
-          && candidate.getTotalAnswered() >= rules.getWinMinAnswers()) {
+      if (isEligibleToWin(candidate)) {
         return candidate.getPlayerKey();
       }
     }
     return null;
+  }
+
+  /**
+   * Đủ điều kiện thắng chưa — MỘT nguồn sự thật duy nhất, dùng chung cho
+   * {@link #pickWinner(Room)} và {@link #checkWinner(WinnerRequest)}.
+   *
+   * <p>Ngưỡng đọc từ {@link GameRulesConfig} ({@code game.win-min-laps} /
+   * {@code game.win-min-answers}, override được bằng biến môi trường lúc
+   * deploy). Trước đây {@code checkWinner} dùng hằng hardcode {@code 1} vòng /
+   * {@code 12} câu nên hai đường trả lời ngược nhau khi ai đó đổi ngưỡng.
+   */
+  private boolean isEligibleToWin(Player player) {
+    return !player.isLeft()
+        && player.getCompletedLaps() >= rules.getWinMinLaps()
+        && player.getTotalAnswered() >= rules.getWinMinAnswers();
   }
 
   @Transactional(readOnly = true)
@@ -248,13 +267,19 @@ public class GameService {
         player.getPlayerKey(), byCategory, player.getTotalAnswered(), player.getCurrentPosition());
   }
 
+  /**
+   * Hỏi phía client "người này đủ điều kiện kết thúc chưa".
+   *
+   * <p>Dùng CHUNG {@link #isEligibleToWin(Player)} với {@link #pickWinner(Room)}
+   * để hai đường không thể trả lời khác nhau: đổi {@code game.win-min-*} thì cả
+   * hai cùng đổi. Trước đây hàm này hardcode {@code 1} vòng / {@code 12} câu
+   * trong khi {@code finish()} đọc ngưỡng cấu hình.
+   */
   @Transactional(readOnly = true)
   public WinnerResponse checkWinner(WinnerRequest request) {
     Player player = resolvePlayer(request.playerId());
-    // Đã đi qua START (≥ 1 vòng) và trả lời đủ câu hỏi RIASEC.
-    boolean eligible =
-        player.getCompletedLaps() >= 1 && player.getTotalAnswered() >= WIN_ANSWERS;
-    return new WinnerResponse(eligible, player.getTotalAnswered(), player.getCurrentPosition());
+    return new WinnerResponse(
+        isEligibleToWin(player), player.getTotalAnswered(), player.getCurrentPosition());
   }
 
   public RiasecDescription description(RiasecCategory category) {
