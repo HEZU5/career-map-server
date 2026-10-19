@@ -13,4 +13,4 @@ import java.time.Instant;
  * @param hollandCode mã Holland tính từ {@code riasecJson}; {@code ""} nếu chưa có
  */
 public record PaymentHistoryItem(
-    String orderId, String status, long amount, Instant createdAt, Instant expiresAt, String hollandCode) {}
+    String orderId, String status, long amount, Instant createdAt, Instant expiresAt, String hollandCode, String riasecJson) {}

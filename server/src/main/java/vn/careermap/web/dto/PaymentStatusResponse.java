@@ -12,4 +12,4 @@ import java.time.Instant;
  * @param hollandCode mã Holland tính từ {@code riasecJson}; {@code ""} nếu chưa có
  */
 public record PaymentStatusResponse(
-    String orderId, String status, long amount, Instant expiresAt, String hollandCode) {}
+    String orderId, String status, long amount, Instant expiresAt, String hollandCode, String riasecJson) {}

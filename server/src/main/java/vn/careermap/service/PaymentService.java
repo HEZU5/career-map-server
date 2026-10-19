@@ -204,12 +204,17 @@ public class PaymentService {
       orderRepository.save(order);
     }
 
+    String riasecJson = order.getRiasecJson();
+    if (riasecJson == null || riasecJson.trim().isEmpty()) {
+      riasecJson = "";
+    }
     return new PaymentStatusResponse(
         order.getId(),
         order.getStatus().name(),
         order.getAmount(),
         order.getExpiresAt(),
-        hollandCode(order.getRiasecJson()));
+        hollandCode(order.getRiasecJson()),
+        riasecJson);
   }
 
   /**
@@ -227,13 +232,18 @@ public class PaymentService {
         order.markExpired();
         orderRepository.save(order);
       }
+      String riasecJson = order.getRiasecJson();
+      if (riasecJson == null || riasecJson.trim().isEmpty()) {
+        riasecJson = "";
+      }
       result.add(new PaymentHistoryItem(
           order.getId(),
           order.getStatus().name(),
           order.getAmount(),
           order.getCreatedAt(),
           order.getExpiresAt(),
-          hollandCode(order.getRiasecJson())));
+          hollandCode(order.getRiasecJson()),
+          riasecJson));
     }
     return result;
   }
