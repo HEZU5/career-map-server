@@ -17,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import vn.careermap.config.GameRulesConfig;
 import vn.careermap.domain.Player;
+import vn.careermap.domain.RiasecCategory;
 import vn.careermap.domain.Room;
 import vn.careermap.domain.RoomStatus;
 import vn.careermap.domain.TurnPhase;
@@ -79,6 +80,13 @@ class GameFinishTest {
     for (int i = 0; i < answers; i++) {
       p.incrementTotalAnswered();
     }
+    return p;
+  }
+
+  /** Người chơi đã trả lời: điểm RIASEC nằm ở bảng {@code scores} của riêng họ. */
+  private Player scoredPlayer(String key, Map<RiasecCategory, Integer> points) {
+    Player p = player(key, 1, 12);
+    points.forEach((category, value) -> p.scoreOf(category).addPoints(value));
     return p;
   }
 
@@ -309,5 +317,86 @@ class GameFinishTest {
     service.start("H12345");
 
     assertThat(room.getStatus()).isEqualTo(RoomStatus.PLAYING);
+  }
+
+  // ── Chụp điểm RIASEC lúc kết thúc ván ───────────────────────────────────
+
+  /**
+   * Điểm RIASEC chỉ sống trong bảng {@code scores}, mà bảng đó bị {@code
+   * RoomJanitor} xoá theo phòng sau {@code finishedRoomTtlMin} (xoá Room →
+   * cascade Player → cascade Score). Báo cáo Holland bán 50.000đ đọc điểm ở
+   * thời điểm tạo đơn, nên phải chụp vào chính phòng NGAY lúc kết thúc ván.
+   */
+  @Test
+  void ketThucVanLuuDiemRiasecCuaMoiNguoi() {
+    Room room =
+        room(
+            "owner",
+            scoredPlayer("owner", Map.of(RiasecCategory.R, 3, RiasecCategory.I, 5)),
+            scoredPlayer("guest-1", Map.of(RiasecCategory.I, 2, RiasecCategory.C, 7)));
+    GameService service = gameService(RULES);
+
+    service.finish(new FinishRequest("owner"));
+
+    // Cộng dồn của MỌI người chơi: I = 5 + 2 = 7, không phải của riêng owner.
+    assertThat(room.getRiasecSnapshot())
+        .containsEntry("R", 3)
+        .containsEntry("I", 7)
+        .containsEntry("C", 7)
+        .containsEntry("A", 0);
+    assertThat(room.getRiasecSnapshot()).hasSize(RiasecCategory.values().length);
+  }
+
+  @Test
+  void phongBiXoaThiDiemVanCon() {
+    Room room =
+        room(
+            "owner",
+            scoredPlayer("owner", Map.of(RiasecCategory.R, 4, RiasecCategory.S, 6)),
+            player("guest-1", 0, 0));
+    GameService service = gameService(RULES);
+    service.finish(new FinishRequest("owner"));
+
+    // Mô phỏng RoomJanitor dọn phòng hết hạn: xoá Room → cascade Player →
+    // cascade Score. Ảnh chụp nằm ở bảng riêng nên không bị mất theo.
+    room.getPlayers().clear();
+
+    assertThat(room.isFinished()).isTrue();
+    assertThat(room.getRiasecSnapshot()).containsEntry("R", 4).containsEntry("S", 6);
+  }
+
+  @Test
+  void chetDiemLaiKhongCongDiton() {
+    Room room = room("owner", scoredPlayer("owner", Map.of(RiasecCategory.R, 5)));
+    GameService service = gameService(RULES);
+
+    service.finish(new FinishRequest("owner"));
+    service.finish(new FinishRequest("owner")); // retry mạng / bấm 2 nút
+
+    assertThat(room.getRiasecSnapshot()).containsEntry("R", 5);
+  }
+
+  @Test
+  void phongChuaKetThucVanThiChuaChupDiem() {
+    Room room = room("owner", scoredPlayer("owner", Map.of(RiasecCategory.R, 5)));
+
+    assertThat(room.getRiasecSnapshot()).isEmpty();
+  }
+
+  @Test
+  void goiKhongDuocQuyenThiKhongChupDiem() {
+    Room room =
+        room(
+            "owner",
+            scoredPlayer("owner", Map.of(RiasecCategory.R, 5)),
+            scoredPlayer("guest-1", Map.of(RiasecCategory.R, 9)));
+    GameService service = gameService(RULES);
+
+    assertThatThrownBy(() -> service.finish(new FinishRequest("guest-1")))
+        .satisfies(GameFinishTest::assertForbidden);
+
+    // Chụp điểm phải nằm SAU kiểm tra quyền chủ phòng: lời gọi bị chặn thì
+    // phòng chưa kết thúc và không được chụp hộ.
+    assertThat(room.getRiasecSnapshot()).isEmpty();
   }
 }

@@ -198,6 +198,11 @@ public class GameService {
     room.setStatus(RoomStatus.FINISHED);
     room.setFinishedAt(Instant.now());
     room.setWinnerKey(pickWinner(room));
+    // Chụp điểm RIASEC ngay lúc này: sau khi đã chốt người thắng, trước khi
+    // broadcast. 30 phút sau RoomJanitor xoá phòng (xoá Room → cascade Player →
+    // cascade Score) nên điểm gốc biến mất; đơn thanh toán 50.000đ được tạo
+    // sau đó, đọc bảng scores lúc đó chỉ ra số 0.
+    room.captureRiasecSnapshot();
     room.clearTurn();
     room.setPendingAnswer(false);
     log.info("[FINISH] phong={} ket-thuc-boi={} nguoi-thang={}",

@@ -1,7 +1,9 @@
 package vn.careermap.domain;
 
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -9,6 +11,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.MapKeyColumn;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
@@ -16,7 +20,9 @@ import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Entity
 @Table(name = "rooms")
@@ -147,6 +153,28 @@ public class Room {
   /** true nếu lần tung gần nhất do hết giờ tự động (hiện pill "tự động tung"). */
   @Column(name = "last_roll_auto", nullable = false, columnDefinition = "boolean not null default false")
   private boolean lastRollAuto;
+
+  /**
+   * Ảnh chụp điểm RIASEC của CẢ BÀN tại lúc ván kết thúc, dạng mã nhóm → tổng
+   * điểm ({@code "R" -> 12, "I" -> 0, ...}).
+   *
+   * <p>Vì sao phải chụp: điểm gốc nằm ở bảng {@code scores} chung với người
+   * chơi, mà {@code RoomJanitor} xoá phòng đã xong sau {@code
+   * finishedRoomTtlMin} — xoá {@code Room} kéo theo cascade xoá {@code Player}
+   * và {@code Score}. Báo cáo Holland (bán 50.000đ) được sinh ra ở thời điểm tạo
+   * đơn thanh toán, tức SAU thời điểm dọn phòng, nên đọc bảng {@code scores}
+   * lúc đó chỉ ra số 0. Ảnh chụp nằm ở bảng riêng gắn với phòng nên sống lâu
+   * hơn dữ liệu gốc và đọc được bất cứ lúc nào phòng còn tồn tại.
+   *
+   * <p>Rỗng khi ván chưa kết thúc — xem {@link #captureRiasecSnapshot()}.
+   */
+  @ElementCollection(fetch = FetchType.EAGER)
+  @CollectionTable(
+      name = "room_riasec_snapshot",
+      joinColumns = @JoinColumn(name = "room_id"))
+  @MapKeyColumn(name = "riasec_code", length = 1)
+  @Column(name = "points", nullable = false)
+  private Map<String, Integer> riasecSnapshot = new LinkedHashMap<>();
 
   @jakarta.persistence.PrePersist
   @jakarta.persistence.PreUpdate
@@ -286,6 +314,50 @@ public class Room {
     player.assignRoom(this);
     player.setJoinOrder(players.size());
     players.add(player);
+  }
+
+  /**
+   * Chụp lại điểm RIASEC của toàn bộ người chơi vào chính phòng này.
+   *
+   * <p>Gọi MỘT lần lúc kết thúc ván ({@code GameService.finish}), sau khi đã
+   * chốt người thắng và trước khi broadcast — xem lý do ở {@link
+   * #riasecSnapshot}.
+   *
+   * <p>Quy tắc cộng dồn:
+   *
+   * <ul>
+   *   <li>Cộng điểm của MỌI người chơi trong phòng (kể cả người đã bấm rời giữa
+   *       ván — họ vẫn trả lời được câu nên vẫn là dữ liệu thật của bàn).
+   *   <li>Luôn có đủ 6 khoá R/I/A/S/E/C, nhóm chưa ai bị hỏi thì để 0 — bên đọc
+   *       ({@code snapshot.get("R")}) không phải đoán có thiếu khoá hay không.
+   *   <li>Ghi đè ảnh cũ chứ không cộng tiếp vào ảnh cũ, nên gọi lại nhiều lần
+   *       vẫn cho cùng một kết quả.
+   * </ul>
+   */
+  public Map<String, Integer> captureRiasecSnapshot() {
+    Map<String, Integer> snapshot = new LinkedHashMap<>();
+    for (RiasecCategory category : RiasecCategory.values()) {
+      snapshot.put(category.name(), 0);
+    }
+    for (Player player : players) {
+      for (Score score : player.getScores()) {
+        if (score.getCategory() == null) continue;
+        // merge chứ không put: nhiều người cùng nhóm thì phải CỘNG, không đè.
+        snapshot.merge(score.getCategory().name(), score.getPoints(), Integer::sum);
+      }
+    }
+    this.riasecSnapshot = snapshot;
+    return snapshot;
+  }
+
+  /** Ảnh chụp điểm RIASEC lúc kết thúc ván; rỗng nếu ván chưa kết thúc. */
+  public Map<String, Integer> getRiasecSnapshot() {
+    return riasecSnapshot;
+  }
+
+  public void setRiasecSnapshot(Map<String, Integer> riasecSnapshot) {
+    this.riasecSnapshot =
+        riasecSnapshot == null ? new LinkedHashMap<>() : new LinkedHashMap<>(riasecSnapshot);
   }
 
   public void advanceTurn() {
