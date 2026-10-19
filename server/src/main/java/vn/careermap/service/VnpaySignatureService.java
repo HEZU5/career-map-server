@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import vn.careermap.config.VnpayConfig;
 
 /**
- * Ký đơn thanh toán VNPay bằng HMAC-SHA512 → KHÔNG: HMAC-SHA256.
+ * Ký đơn thanh toán VNPay bằng HMAC-SHA256, KHÔNG phải SHA512.
  *
  * <p>Thuật toán (bất biến, không đổi):
  * <ol>
@@ -20,7 +20,7 @@ import vn.careermap.config.VnpayConfig;
  *   <li>Bỏ tham số giá trị null hoặc rỗng.</li>
  *   <li>Sắp xếp key theo alphabet (TreeMap order).</li>
  *   <li>Nối {@code key=value} bằng {@code &}.</li>
- *   <li>HMAC-SHA512 → KHÔNG: HMAC-SHA256 với khoá {@code HashSecret}.</li>
+ *   <li>HMAC-SHA256, KHÔNG phải SHA512 với khoá {@code HashSecret}.</li>
  *   <li>Hex lowercase — độ dài đúng 64 ký tự.</li>
  * </ol>
  */

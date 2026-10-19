@@ -32,9 +32,14 @@ class PaymentIpnTest {
       new PaymentService(RULES, null, orderRepository, null, signatureService, VNPAY);
 
   private static Map<String, String> signedParams(String txnRef, String txnStatus) {
+    return signedParams(txnRef, txnStatus, 50000L);
+  }
+
+  private static Map<String, String> signedParams(String txnRef, String txnStatus, long amountVnd) {
     Map<String, String> params = new LinkedHashMap<>();
     params.put("vnp_TxnRef", txnRef);
     params.put("vnp_TransactionStatus", txnStatus);
+    params.put("vnp_Amount", String.valueOf(amountVnd * 100));
     String hash = new VnpaySignatureService(
         new VnpayConfig(true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn"))
         .sign(params);
@@ -50,7 +55,7 @@ class PaymentIpnTest {
 
     String result = service.handleIpn(signedParams("order1", "01"));
 
-    assertThat(result).isEqualTo("Transaction Status: 01");
+    assertThat(result).isEqualTo("{\"RspCode\":\"00\",\"Message\":\"Confirm Success\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PAID);
     assertThat(order.getPaidAt()).isNotNull();
     verify(orderRepository).save(order);
@@ -65,7 +70,7 @@ class PaymentIpnTest {
     params.put("vnp_SecureHash", "chu-ky-sai");
     String result = service.handleIpn(params);
 
-    assertThat(result).isEqualTo("Transaction Status: 01");
+    assertThat(result).isEqualTo("{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
     verify(orderRepository, never()).save(any());
   }
@@ -76,7 +81,7 @@ class PaymentIpnTest {
 
     String result = service.handleIpn(signedParams("missing", "01"));
 
-    assertThat(result).isEqualTo("Transaction Status: 01");
+    assertThat(result).isEqualTo("{\"RspCode\":\"01\",\"Message\":\"Order not found\"}");
   }
 
   @Test
@@ -88,7 +93,7 @@ class PaymentIpnTest {
 
     String result = service.handleIpn(signedParams("order3", "01"));
 
-    assertThat(result).isEqualTo("Transaction Status: 01");
+    assertThat(result).isEqualTo("{\"RspCode\":\"00\",\"Message\":\"Confirm Success\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PAID);
   }
 
@@ -104,8 +109,8 @@ class PaymentIpnTest {
     String r2 = service.handleIpn(signedParams("order4", "01"));
     String r3 = service.handleIpn(signedParams("order4", "01"));
 
-    assertThat(r2).isEqualTo("Transaction Status: 01");
-    assertThat(r3).isEqualTo("Transaction Status: 01");
+    assertThat(r2).isEqualTo("{\"RspCode\":\"02\",\"Message\":\"Order already confirmed\"}");
+    assertThat(r3).isEqualTo("{\"RspCode\":\"02\",\"Message\":\"Order already confirmed\"}");
     assertThat(order.getPaidAt()).isEqualTo(firstPaidAt);
   }
 
@@ -117,7 +122,7 @@ class PaymentIpnTest {
     Map<String, String> params = signedParams("order5", "00");
     String result = service.handleIpn(params);
 
-    assertThat(result).isEqualTo("Transaction Status: 01");
+    assertThat(result).isEqualTo("{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
     verify(orderRepository, never()).save(any());
   }

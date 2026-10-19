@@ -135,37 +135,42 @@ public class PaymentService {
    *
    * <p>Toàn bộ thân hàm được bọc try/catch để **không bao giờ** ném exception ra
    * ngoài — {@code ConflictAdvice} là {@code @RestControllerAdvice}, nếu exception
-   * thoát ra ngoài sẽ bị trả 5xx và VNPay retry mãi. Luôn trả HTTP 200 (chuỗi
-   * {@code "Transaction Status: 01"}).
+   * thoát ra ngoài sẽ bị trả 5xx và VNPay retry mãi. Luôn trả HTTP 200 với body
+   * JSON {@code {"RspCode":...,"Message":...}} theo chuẩn VNPay.
    *
-   * <p>Thứ tự: verify chữ ký → kiểm tra {@code vnp_TransactionStatus == "01"} →
-   * tra đơn theo {@code vnp_TxnRef} → nếu đã PAID thì bỏ qua → đánh dấu PAID +
+   * <p>Thứ tự: verify chữ ký → {@code vnp_TransactionStatus == "01"} → tra đơn
+   * theo {@code vnp_TxnRef} → nếu đã PAID → kiểm tra số tiền → đánh dấu PAID +
    * lưu. IPN tới sau khi đơn EXPIRED vẫn nhận PAID (tiền đã vào).
    */
   @Transactional
   public String handleIpn(Map<String, String> params) {
     try {
       if (!signatureService.verify(params)) {
-        return "Transaction Status: 01";
+        return "{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}";
       }
       if (!"01".equals(params.get("vnp_TransactionStatus"))) {
-        return "Transaction Status: 01";
+        return "{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}";
       }
       String txnRef = params.get("vnp_TxnRef");
       Optional<PaymentOrder> found = orderRepository.findById(txnRef);
       if (found.isEmpty()) {
-        return "Transaction Status: 01";
+        return "{\"RspCode\":\"01\",\"Message\":\"Order not found\"}";
       }
       PaymentOrder order = found.get();
       if (order.isPaid()) {
-        return "Transaction Status: 01";
+        return "{\"RspCode\":\"02\",\"Message\":\"Order already confirmed\"}";
+      }
+      String receivedAmount = params.get("vnp_Amount");
+      long expectedAmount = order.getAmount() * 100L;
+      if (receivedAmount == null || !receivedAmount.equals(String.valueOf(expectedAmount))) {
+        return "{\"RspCode\":\"04\",\"Message\":\"Invalid amount\"}";
       }
       order.markPaid(Instant.now());
       orderRepository.save(order);
-      return "Transaction Status: 01";
+      return "{\"RspCode\":\"00\",\"Message\":\"Confirm Success\"}";
     } catch (Exception e) {
       log.warn("IPN xử lý thất bại: {}", e);
-      return "Transaction Status: 01";
+      return "{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}";
     }
   }
 }
