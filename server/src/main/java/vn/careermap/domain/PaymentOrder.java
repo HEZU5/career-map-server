@@ -62,6 +62,13 @@ public class PaymentOrder {
   private Instant paidAt;
 
   /**
+   * Ảnh chụp 6 điểm RIASEC lúc kết thúc ván, lưu dạng JSON ({@code {"R":4,...}}).
+   * Dùng để tính mã Holland cho báo cáo sau khi phòng đã bị dọn.
+   */
+  @Column(name = "riasec_json", columnDefinition = "text")
+  private String riasecJson;
+
+  /**
    * Tạo đơn mới trong trạng thái {@code PENDING}.
    *
    * <p>{@code createdAt} và {@code expiresAt} lấy từ CÙNG một mốc {@code now}
@@ -136,5 +143,13 @@ public class PaymentOrder {
 
   public Instant getPaidAt() {
     return paidAt;
+  }
+
+  public String getRiasecJson() {
+    return riasecJson;
+  }
+
+  public void setRiasecJson(String riasecJson) {
+    this.riasecJson = riasecJson;
   }
 }

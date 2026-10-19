@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import vn.careermap.service.PaymentService;
 import vn.careermap.web.dto.CreatePaymentRequest;
 import vn.careermap.web.dto.CreatePaymentResponse;
+import vn.careermap.web.dto.PaymentHistoryItem;
+import vn.careermap.web.dto.PaymentStatusResponse;
 
 /**
  * REST endpoint cho thanh toán VNPay.
@@ -36,6 +40,17 @@ public class PaymentController {
   @PostMapping("/create")
   public CreatePaymentResponse create(@RequestBody CreatePaymentRequest request) {
     return paymentService.createOrder(request.playerKey());
+  }
+
+  @GetMapping("/history")
+  public List<PaymentHistoryItem> history(@RequestParam String playerKey) {
+    return paymentService.history(playerKey);
+  }
+
+  @GetMapping("/{orderId}")
+  public PaymentStatusResponse status(
+      @PathVariable String orderId, @RequestParam String playerKey) {
+    return paymentService.getStatus(orderId, playerKey);
   }
 
   @PostMapping(value = "/ipn", consumes = "application/x-www-form-urlencoded", produces = "application/json")

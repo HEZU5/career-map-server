@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -21,6 +22,8 @@ import vn.careermap.domain.Player;
 import vn.careermap.repo.PaymentOrderRepository;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.CreatePaymentResponse;
+import vn.careermap.web.dto.PaymentHistoryItem;
+import vn.careermap.web.dto.PaymentStatusResponse;
 import vn.careermap.web.dto.WinnerRequest;
 import vn.careermap.web.dto.WinnerResponse;
 
@@ -105,6 +108,9 @@ public class PaymentService {
         player.getRoom() == null ? null : player.getRoom().getCode(),
         rules.getPaymentAmountVnd(),
         rules.getPaymentTtlMinutes());
+    if (player.getRoom() != null) {
+      order.setRiasecJson(toJson(player.getRoom().getRiasecSnapshot()));
+    }
     orderRepository.save(order);
     return toResponse(order);
   }
@@ -172,5 +178,145 @@ public class PaymentService {
       log.warn("IPN xử lý thất bại: {}", e);
       return "{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}";
     }
+  }
+
+  /**
+   * Tra trạng thái một đơn thanh toán của người chơi.
+   *
+   * <p>Nạp đơn theo {@code orderId} VÀ {@code playerKey}: nếu không khớp người
+   * mua (đơn của người khác) → 404. Nếu đơn đang {@code PENDING} và đã quá hạn
+   * thì đặt {@code EXPIRED} và lưu ngay (lazy expire, không dùng {@code @Scheduled}).
+   *
+   * @throws ResponseStatusException 404 nếu không tìm thấy đơn hoặc không thuộc
+   *                                 người chơi này
+   */
+  @Transactional
+  public PaymentStatusResponse getStatus(String orderId, String playerKey) {
+    PaymentOrder order = orderRepository
+        .findByIdAndPlayerKey(orderId, playerKey)
+        .orElseThrow(() -> new ResponseStatusException(
+            HttpStatus.NOT_FOUND, "Không tìm thấy đơn thanh toán '" + orderId + "'"));
+
+    Instant now = Instant.now();
+    if (order.getStatus() == PaymentStatus.PENDING && now.isAfter(order.getExpiresAt())) {
+      order.markExpired();
+      orderRepository.save(order);
+    }
+
+    return new PaymentStatusResponse(
+        order.getId(),
+        order.getStatus().name(),
+        order.getAmount(),
+        order.getExpiresAt(),
+        hollandCode(order.getRiasecJson()));
+  }
+
+  /**
+   * Lịch sử thanh toán của người chơi, đơn mới nhất trước, tối đa 100.
+   */
+  @Transactional(readOnly = true)
+  public List<PaymentHistoryItem> history(String playerKey) {
+    List<PaymentOrder> orders = orderRepository.findByPlayerKeyOrderByCreatedAtDesc(playerKey);
+    List<PaymentHistoryItem> result = new java.util.ArrayList<>();
+    int limit = Math.min(orders.size(), 100);
+    for (int i = 0; i < limit; i++) {
+      PaymentOrder order = orders.get(i);
+      result.add(new PaymentHistoryItem(
+          order.getId(),
+          order.getStatus().name(),
+          order.getAmount(),
+          order.getCreatedAt(),
+          order.getExpiresAt(),
+          hollandCode(order.getRiasecJson())));
+    }
+    return result;
+  }
+
+  /**
+   * Tính mã Holland từ chuỗi JSON chứa 6 điểm RIASEC.
+   *
+   * <p>Nhóm có điểm cao nhất → mã. Hoà theo thứ tự {@code R, I, A, S, E, C}
+   * (R trước). Trả {@code ""} nếu {@code riasecJson} null/rỗng hoặc không đọc
+   * được điểm nào.
+   *
+   * @param riasecJson chuỗi JSON dạng {@code {"R":4,"I":2,...}} (hoặc các biến
+   *                   thể có khoảng trắng/dấu {@code =})
+   * @return mã Holland một chữ cái, hoặc {@code ""}
+   */
+  public static String hollandCode(String riasecJson) {
+    if (riasecJson == null || riasecJson.trim().isEmpty()) {
+      return "";
+    }
+    String text = riasecJson.trim();
+
+    // Thử đọc JSON trước.
+    Map<String, Integer> scores = new LinkedHashMap<>();
+    // Regex trích xuất từng cặp "KEY": number hoặc KEY=number / KEY: number
+    // theo thứ tự ưu tiên các nhóm R,I,A,S,E,C.
+    String[] groups = {"R", "I", "A", "S", "E", "C"};
+    for (String group : groups) {
+      scores.put(group, extractScore(text, group));
+    }
+
+    // Nếu không đọc được điểm nào (tất cả 0 và chuỗi không chứa số) → "".
+    // Nhưng nếu chuỗi có chứa ít nhất một số thì vẫn trả nhóm cao nhất (có thể R
+    // khi tất cả 0). Phân biệt bằng cờ hasNumber.
+    boolean hasNumber = text.chars().anyMatch(Character::isDigit);
+    if (!hasNumber) {
+      return "";
+    }
+
+    String best = "R";
+    int bestScore = scores.get("R");
+    for (String group : groups) {
+      int s = scores.get(group);
+      if (s > bestScore) {
+        bestScore = s;
+        best = group;
+      }
+    }
+    return best;
+  }
+
+  private static int extractScore(String text, String group) {
+    // JSON: "R": 4  hoặc  "R":4
+    java.util.regex.Matcher m = java.util.regex.Pattern
+        .compile("\"" + group + "\"\\s*[:=]\\s*(-?\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE)
+        .matcher(text);
+    if (m.find()) {
+      try {
+        return Integer.parseInt(m.group(1));
+      } catch (NumberFormatException ignored) {
+      }
+    }
+    // Không có ngoặc kép: R:4 / R=4 / R 4
+    m = java.util.regex.Pattern
+        .compile("\\b" + group + "\\b\\s*[:=]\\s*(-?\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE)
+        .matcher(text);
+    if (m.find()) {
+      try {
+        return Integer.parseInt(m.group(1));
+      } catch (NumberFormatException ignored) {
+      }
+    }
+    // JSON dạng {"R":4} đã bắt ở trên; fallback: tìm group theo thứ tự trong mảng số
+    return 0;
+  }
+
+  private static String toJson(Map<String, Integer> snapshot) {
+    if (snapshot == null || snapshot.isEmpty()) {
+      return null;
+    }
+    StringBuilder sb = new StringBuilder("{");
+    boolean first = true;
+    for (Map.Entry<String, Integer> e : snapshot.entrySet()) {
+      if (!first) {
+        sb.append(",");
+      }
+      first = false;
+      sb.append("\"").append(e.getKey()).append("\":")
+          .append(e.getValue() == null ? 0 : e.getValue());
+    }
+    return sb.append("}").toString();
   }
 }
