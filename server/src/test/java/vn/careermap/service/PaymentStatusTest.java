@@ -50,7 +50,7 @@ class PaymentStatusTest {
 
   @Test
   void donCuaNguoiKhacKhongXemDuoc() {
-    when(orderRepository.findByIdAndPlayerKey("order2", "p")).thenReturn(Optional.empty());
+    when(orderRepository.findByIdAndPlayerKey("order2", "p2")).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.getStatus("order2", "p2"))
         .isInstanceOf(ResponseStatusException.class)

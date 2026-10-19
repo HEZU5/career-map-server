@@ -3,6 +3,7 @@ package vn.careermap.service;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -214,13 +215,18 @@ public class PaymentService {
   /**
    * Lịch sử thanh toán của người chơi, đơn mới nhất trước, tối đa 100.
    */
-  @Transactional(readOnly = true)
+  @Transactional
   public List<PaymentHistoryItem> history(String playerKey) {
     List<PaymentOrder> orders = orderRepository.findByPlayerKeyOrderByCreatedAtDesc(playerKey);
-    List<PaymentHistoryItem> result = new java.util.ArrayList<>();
+    List<PaymentHistoryItem> result = new ArrayList<>();
     int limit = Math.min(orders.size(), 100);
+    Instant now = Instant.now();
     for (int i = 0; i < limit; i++) {
       PaymentOrder order = orders.get(i);
+      if (order.getStatus() == PaymentStatus.PENDING && now.isAfter(order.getExpiresAt())) {
+        order.markExpired();
+        orderRepository.save(order);
+      }
       result.add(new PaymentHistoryItem(
           order.getId(),
           order.getStatus().name(),
@@ -254,15 +260,17 @@ public class PaymentService {
     // Regex trích xuất từng cặp "KEY": number hoặc KEY=number / KEY: number
     // theo thứ tự ưu tiên các nhóm R,I,A,S,E,C.
     String[] groups = {"R", "I", "A", "S", "E", "C"};
+    boolean foundAny = false;
     for (String group : groups) {
-      scores.put(group, extractScore(text, group));
+      Integer extracted = extractScore(text, group);
+      if (extracted != null) {
+        foundAny = true;
+      }
+      scores.put(group, extracted == null ? 0 : extracted);
     }
 
-    // Nếu không đọc được điểm nào (tất cả 0 và chuỗi không chứa số) → "".
-    // Nhưng nếu chuỗi có chứa ít nhất một số thì vẫn trả nhóm cao nhất (có thể R
-    // khi tất cả 0). Phân biệt bằng cờ hasNumber.
-    boolean hasNumber = text.chars().anyMatch(Character::isDigit);
-    if (!hasNumber) {
+    // Nếu không đọc được bất kỳ key RIASEC hợp lệ nào → "".
+    if (!foundAny) {
       return "";
     }
 
@@ -278,7 +286,7 @@ public class PaymentService {
     return best;
   }
 
-  private static int extractScore(String text, String group) {
+  private static Integer extractScore(String text, String group) {
     // JSON: "R": 4  hoặc  "R":4
     java.util.regex.Matcher m = java.util.regex.Pattern
         .compile("\"" + group + "\"\\s*[:=]\\s*(-?\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE)
@@ -299,8 +307,8 @@ public class PaymentService {
       } catch (NumberFormatException ignored) {
       }
     }
-    // JSON dạng {"R":4} đã bắt ở trên; fallback: tìm group theo thứ tự trong mảng số
-    return 0;
+    // Không tìm thấy key hợp lệ.
+    return null;
   }
 
   private static String toJson(Map<String, Integer> snapshot) {
