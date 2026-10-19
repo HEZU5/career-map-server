@@ -9,6 +9,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Không dựng Spring context, không cần database: constructor nhận thẳng giá
  * trị nên test được cả luật mặc định lẫn phần đóng gói gửi cho client.
+ *
+ * <p>Lưu ý: constructor tay ở đây KHÔNG ghim được giá trị mặc định thật — đổi
+ * {@code application.properties} hay đổi default trong {@code @Value} thì file này
+ * vẫn xanh. Việc đó do {@code GameRulesConfigDefaultsTest} đảm nhiệm.
  */
 class GameRulesConfigTest {
   private static final GameRulesConfig RULES =
