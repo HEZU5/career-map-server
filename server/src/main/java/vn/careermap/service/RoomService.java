@@ -170,6 +170,9 @@ public class RoomService {
       p.setOrderDice(0);
     }
     room.setActive(true);
+    // Phòng bắt đầu ván thì rời WAITING: client đọc `status` trong snapshot để
+    // biết ván đã bắt đầu (trước đây status cứ kẹt ở WAITING tới lúc kết thúc).
+    room.setStatus(RoomStatus.PLAYING);
     room.setOrderPhase(true);
     room.setActivePlayerIndex(0);
     RoomResponse response = toResponse(room);

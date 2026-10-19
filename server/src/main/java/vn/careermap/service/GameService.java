@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import vn.careermap.config.GameRulesConfig;
 import vn.careermap.domain.Player;
 import vn.careermap.domain.RiasecCategory;
 import vn.careermap.domain.Room;
@@ -41,16 +42,19 @@ public class GameService {
   private final GameBroadcaster broadcaster;
   private final GameSnapshotBuilder snapshotBuilder;
   private final TurnCoordinator turns;
+  private final GameRulesConfig rules;
 
   public GameService(
       PlayerRepository playerRepository,
       GameBroadcaster broadcaster,
       GameSnapshotBuilder snapshotBuilder,
-      TurnCoordinator turns) {
+      TurnCoordinator turns,
+      GameRulesConfig rules) {
     this.playerRepository = playerRepository;
     this.broadcaster = broadcaster;
     this.snapshotBuilder = snapshotBuilder;
     this.turns = turns;
+    this.rules = rules;
   }
 
   /**
@@ -164,9 +168,16 @@ public class GameService {
   }
 
   /**
-   * Đánh dấu ván kết thúc. KHÔNG thay đổi luật chơi — client vẫn là bên quyết
-   * định thắng thua như trước; chỉ ghi trạng thái để phòng được giữ cho bảng
-   * kết quả theo {@code FINISHED_ROOM_TTL_MIN} rồi mới dọn.
+   * Kết thúc ván — chỉ chủ phòng, và người thắng do SERVER tự chấm.
+   *
+   * <p>Trước đây client gửi kèm {@code winnerKey} và server ghi thẳng vào
+   * phòng: bất kỳ ai cũng tự phong mình là người thắng, kể cả người chưa đủ
+   * điều kiện. Nay {@code winnerKey} không còn nằm trong request — server tự
+   * chấm theo ngưỡng {@link GameRulesConfig#getWinMinLaps()} /
+   * {@link GameRulesConfig#getWinMinAnswers()}.
+   *
+   * <p>Phòng vẫn được giữ lại cho bảng kết quả theo {@code FINISHED_ROOM_TTL_MIN}
+   * rồi mới dọn.
    */
   @Transactional
   public GameSnapshot finish(FinishRequest request) {
@@ -175,13 +186,19 @@ public class GameService {
     if (room == null) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Không ở phòng nào");
     }
+    // Kiểm tra quyền TRƯỚC nhánh "đã kết thúc, trả snapshot": đặt sau thì người
+    // còn lại trong phòng vẫn gọi được sau khi ván đã xong và nhận snapshot y
+    // hệt lúc còn hợp lệ — tức API không còn là chốt chặn quyền nữa.
+    if (!player.getPlayerKey().equals(room.effectiveHostKey())) {
+      throw new ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Chỉ chủ phòng mới kết thúc được ván");
+    }
     if (room.isFinished()) {
       return snapshotBuilder.build(room);
     }
     room.setStatus(RoomStatus.FINISHED);
     room.setFinishedAt(Instant.now());
-    room.setWinnerKey(request.winnerKey() == null || request.winnerKey().isBlank()
-        ? null : request.winnerKey());
+    room.setWinnerKey(pickWinner(room));
     room.clearTurn();
     room.setPendingAnswer(false);
     log.info("[FINISH] phong={} ket-thuc-boi={} nguoi-thang={}",
@@ -189,6 +206,24 @@ public class GameService {
     GameSnapshot snapshot = snapshotBuilder.build(room);
     broadcaster.gameFinished(room.getCode(), snapshot, room.getWinnerKey());
     return snapshot;
+  }
+
+  /**
+   * Người thắng = người ĐẦU TIÊN trong phòng đủ cả hai ngưỡng thắng; không ai
+   * đủ thì {@code null} (ván kết thúc không có thắng).
+   *
+   * <p>Thứ tự lấy từ {@link Room#getPlayers()} — {@code @OrderBy("playOrder ASC,
+   * joinOrder ASC")} nên đã là thứ tự đi thật (xếp theo xúc xắc, hoà thì người
+   * vào phòng trước); không cần sort lại.
+   */
+  private String pickWinner(Room room) {
+    for (Player candidate : room.getPlayers()) {
+      if (candidate.getCompletedLaps() >= rules.getWinMinLaps()
+          && candidate.getTotalAnswered() >= rules.getWinMinAnswers()) {
+        return candidate.getPlayerKey();
+      }
+    }
+    return null;
   }
 
   @Transactional(readOnly = true)

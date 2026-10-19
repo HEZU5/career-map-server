@@ -78,9 +78,10 @@ public class GameController {
   }
 
   /**
-   * Kết thúc ván — client vẫn là bên quyết định thắng thua (không đổi luật
-   * chơi), endpoint này chỉ ghi trạng thái để phòng được giữ cho bảng kết quả
-   * rồi mới dọn theo {@code FINISHED_ROOM_TTL_MIN}.
+   * Kết thúc ván — chỉ chủ phòng gọi được, và người thắng do SERVER tự chấm
+   * theo luật thắng (client không gửi `winnerKey` nữa). Endpoint này ghi trạng
+   * thái kết thúc để phòng được giữ cho bảng kết quả rồi mới dọn theo
+   * {@code FINISHED_ROOM_TTL_MIN}.
    */
   @PostMapping("/game/finish")
   public GameSnapshot finish(@RequestBody FinishRequest request) {
