@@ -48,6 +48,22 @@ public class VnpaySignatureService {
   }
 
   /**
+   * Xác minh chữ ký của một bộ tham số IPN: ký lại từ các tham số (bỏ
+   * {@code vnp_SecureHash} và giá trị null/rỗng, sắp xếp alphabet, nối
+   * {@code key=value} bằng {@code &}, HMAC-SHA256 hex lowercase) rồi so với
+   * {@code vnp_SecureHash} nhận được.
+   *
+   * @return {@code true} nếu chữ ký khớp (so sánh không phân biệt hoa thường).
+   */
+  public boolean verify(Map<String, String> params) {
+    String received = params == null ? null : params.get(SECURE_HASH_KEY);
+    if (received == null || received.isEmpty()) {
+      return false;
+    }
+    return received.equalsIgnoreCase(sign(params));
+  }
+
+  /**
    * Query string đã sẵn sàng ghép vào payUrl, gồm {@code &vnp_SecureHash=...}
    * ở cuối (hex lowercase, dài 64 ký tự).
    *

@@ -7,6 +7,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +40,8 @@ import vn.careermap.web.dto.WinnerResponse;
  */
 @Service
 public class PaymentService {
+
+  private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
   private static final String SANDBOX_PAY_URL =
       "https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm";
@@ -124,5 +128,44 @@ public class PaymentService {
 
     String payUrl = SANDBOX_PAY_URL + "?" + signatureService.signedQueryString(params);
     return new CreatePaymentResponse(order.getId(), payUrl, order.getExpiresAt());
+  }
+
+  /**
+   * Xử lý IPN server-to-server từ VNPay.
+   *
+   * <p>Toàn bộ thân hàm được bọc try/catch để **không bao giờ** ném exception ra
+   * ngoài — {@code ConflictAdvice} là {@code @RestControllerAdvice}, nếu exception
+   * thoát ra ngoài sẽ bị trả 5xx và VNPay retry mãi. Luôn trả HTTP 200 (chuỗi
+   * {@code "Transaction Status: 01"}).
+   *
+   * <p>Thứ tự: verify chữ ký → kiểm tra {@code vnp_TransactionStatus == "01"} →
+   * tra đơn theo {@code vnp_TxnRef} → nếu đã PAID thì bỏ qua → đánh dấu PAID +
+   * lưu. IPN tới sau khi đơn EXPIRED vẫn nhận PAID (tiền đã vào).
+   */
+  @Transactional
+  public String handleIpn(Map<String, String> params) {
+    try {
+      if (!signatureService.verify(params)) {
+        return "Transaction Status: 01";
+      }
+      if (!"01".equals(params.get("vnp_TransactionStatus"))) {
+        return "Transaction Status: 01";
+      }
+      String txnRef = params.get("vnp_TxnRef");
+      Optional<PaymentOrder> found = orderRepository.findById(txnRef);
+      if (found.isEmpty()) {
+        return "Transaction Status: 01";
+      }
+      PaymentOrder order = found.get();
+      if (order.isPaid()) {
+        return "Transaction Status: 01";
+      }
+      order.markPaid(Instant.now());
+      orderRepository.save(order);
+      return "Transaction Status: 01";
+    } catch (Exception e) {
+      log.warn("IPN xử lý thất bại: {}", e);
+      return "Transaction Status: 01";
+    }
   }
 }
