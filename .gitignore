@@ -22,8 +22,8 @@ Thumbs.db
 
 # ─── Flutter Frontend (deploy trực tiếp, không qua git) ───
 # Source
-lib/
-test/
+/lib/
+/test/
 analysis_options.yaml
 
 # Flutter config
