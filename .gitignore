@@ -44,7 +44,8 @@ ios/
 windows/
 linux/
 macos/
-web/
+# Flutter web build output (gốc repo) — không Ignore Java package vn.careermap.web.dto
+/web/
 
 # Firebase hosting cache
 .firebase/
