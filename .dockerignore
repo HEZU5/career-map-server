@@ -1,0 +1,13 @@
+.git/
+.gitignore
+.idea/
+*.iml
+*.log
+server/target/
+build/
+web/
+node_modules/
+.DS_Store
+.env
+server.log
+server.err.log
