@@ -4,8 +4,7 @@
 *.iml
 *.log
 server/target/
-build/
-web/
+build/            # Flutter web build output at repo root
 node_modules/
 .DS_Store
 .env
