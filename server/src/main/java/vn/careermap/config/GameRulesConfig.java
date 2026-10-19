@@ -4,7 +4,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * MỘT file cấu hình duy nhất cho toàn bộ thời gian và luật vắng mặt.
+ * MỘT file cấu hình duy nhất cho toàn bộ thời gian, luật vắng mặt, luật thắng và
+ * luật thanh toán.
  *
  * <p>Mọi hằng số thời gian của hệ thống nằm ở đây — không rải magic number trong
  * service/widget. Client đọc qua {@code GET /api/game/config} nên đổi giá trị ở
@@ -43,6 +44,18 @@ public class GameRulesConfig {
   /** Chiến lược xử lý người vắng mặt: skip | bot | eliminate. */
   public final OfflinePolicy offlinePolicy;
 
+  /** Giá một đơn báo cáo Holland (VND) — server tự đặt, không nhận từ client. */
+  public final long paymentAmountVnd;
+
+  /** Đơn chờ thanh toán sống bao lâu (phút); client đếm ngược từ con số này. */
+  public final long paymentTtlMinutes;
+
+  /** Ngưỡng thắng: phải đi được tối thiểu số vòng này. */
+  public final int winMinLaps;
+
+  /** Ngưỡng thắng: phải trả lời tối thiểu số câu này (24 ô RIASEC = 4 câu mỗi vòng). */
+  public final int winMinAnswers;
+
   public GameRulesConfig(
       @Value("${game.turn-roll-s:15}") long turnRollS,
       @Value("${game.answer-timeout-s:60}") long answerTimeoutS,
@@ -52,7 +65,11 @@ public class GameRulesConfig {
       @Value("${game.fast-auto-roll-s:2}") long fastAutoRollS,
       @Value("${game.empty-room-ttl-min:10}") long emptyRoomTtlMin,
       @Value("${game.finished-room-ttl-min:30}") long finishedRoomTtlMin,
-      @Value("${game.offline-policy:skip}") String offlinePolicy) {
+      @Value("${game.offline-policy:skip}") String offlinePolicy,
+      @Value("${payment.amount-vnd:50000}") long paymentAmountVnd,
+      @Value("${payment.ttl-minutes:15}") long paymentTtlMinutes,
+      @Value("${game.win-min-laps:1}") int winMinLaps,
+      @Value("${game.win-min-answers:12}") int winMinAnswers) {
     this.turnRollS = turnRollS;
     this.answerTimeoutS = answerTimeoutS;
     this.awayAfterS = awayAfterS;
@@ -62,6 +79,30 @@ public class GameRulesConfig {
     this.emptyRoomTtlMin = emptyRoomTtlMin;
     this.finishedRoomTtlMin = finishedRoomTtlMin;
     this.offlinePolicy = OfflinePolicy.parse(offlinePolicy);
+    this.paymentAmountVnd = paymentAmountVnd;
+    this.paymentTtlMinutes = paymentTtlMinutes;
+    this.winMinLaps = winMinLaps;
+    this.winMinAnswers = winMinAnswers;
+  }
+
+  /** Số tiền một đơn (VND) — dùng khi tạo đơn, không nhận từ client. */
+  public long getPaymentAmountVnd() {
+    return paymentAmountVnd;
+  }
+
+  /** Hạn đơn (phút) — dùng tính {@code expiresAt} khi tạo đơn. */
+  public long getPaymentTtlMinutes() {
+    return paymentTtlMinutes;
+  }
+
+  /** Ngưỡng thắng theo số vòng đã hoàn thành. */
+  public int getWinMinLaps() {
+    return winMinLaps;
+  }
+
+  /** Ngưỡng thắng theo tổng số câu đã trả lời. */
+  public int getWinMinAnswers() {
+    return winMinAnswers;
   }
 
   public GameRulesSnapshot snapshot() {
@@ -74,6 +115,10 @@ public class GameRulesConfig {
         fastAutoRollS,
         emptyRoomTtlMin,
         finishedRoomTtlMin,
-        offlinePolicy.name().toLowerCase());
+        offlinePolicy.name().toLowerCase(),
+        paymentAmountVnd,
+        paymentTtlMinutes,
+        winMinLaps,
+        winMinAnswers);
   }
 }

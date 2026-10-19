@@ -10,4 +10,8 @@ public record GameRulesSnapshot(
     long fastAutoRollS,
     long emptyRoomTtlMin,
     long finishedRoomTtlMin,
-    String offlinePolicy) {}
+    String offlinePolicy,
+    long paymentAmountVnd,
+    long paymentTtlMinutes,
+    int winMinLaps,
+    int winMinAnswers) {}
