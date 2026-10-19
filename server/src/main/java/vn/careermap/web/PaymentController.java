@@ -38,7 +38,7 @@ public class PaymentController {
     return paymentService.createOrder(request.playerKey());
   }
 
-  @PostMapping(value = "/ipn", consumes = "application/x-www-form-urlencoded")
+  @PostMapping(value = "/ipn", consumes = "application/x-www-form-urlencoded", produces = "application/json")
   @ResponseStatus(HttpStatus.OK)
   public String ipn(@RequestParam MultiValueMap<String, String> params) {
     return paymentService.handleIpn(toMap(params));
