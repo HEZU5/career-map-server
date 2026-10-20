@@ -163,6 +163,74 @@ class PaymentServiceTest {
   }
 
   @Test
+  void vnpayBatNhungThieuKhoaBiMatThiKhongTaoDuocDon() {
+    VnpayConfig noSecret =
+        new VnpayConfig(true, "TMNCODE", "", "https://app.example/return", "https://app.example/ipn");
+    PaymentService brokenService = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(noSecret),
+        noSecret);
+
+    // Người chơi CÓ THẬT và đủ điều kiện thắng: nếu không chặn ở cửa thì đơn
+    // sẽ được ghi vào DB trước, rồi VnpaySignatureService mới ném lỗi
+    // ("Empty key") -> còn đơn rác PENDING trong bảng.
+    when(playerRepository.findByPlayerKey("winner"))
+        .thenReturn(Optional.of(player("winner", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "winner", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> brokenService.createOrder("winner"))
+        .satisfies(thrown -> {
+          assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+          ResponseStatusException ex = (ResponseStatusException) thrown;
+          assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+          assertThat(ex.getReason()).contains("cấu hình");
+        });
+
+    // Chặn ở cửa: KHÔNG đụng DB, nên không còn đơn rác PENDING.
+    verify(playerRepository, never()).findByPlayerKey(any());
+    verify(gameService, never()).checkWinner(any());
+    verify(orderRepository, never()).save(any());
+  }
+
+  @Test
+  void vnpayBatNhungThieuMaMerchantThiKhongTaoDuocDon() {
+    VnpayConfig noTmnCode =
+        new VnpayConfig(true, "", "secret", "https://app.example/return", "https://app.example/ipn");
+    PaymentService brokenService = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(noTmnCode),
+        noTmnCode);
+
+    when(playerRepository.findByPlayerKey("winner"))
+        .thenReturn(Optional.of(player("winner", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "winner", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> brokenService.createOrder("winner"))
+        .satisfies(thrown -> {
+          assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+          ResponseStatusException ex = (ResponseStatusException) thrown;
+          assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+          assertThat(ex.getReason()).contains("cấu hình");
+        });
+
+    verify(playerRepository, never()).findByPlayerKey(any());
+    verify(gameService, never()).checkWinner(any());
+    verify(orderRepository, never()).save(any());
+  }
+
+  @Test
   void taoLaiThiTraLaiDonCungDangCho() {
     when(playerRepository.findByPlayerKey("again"))
         .thenReturn(Optional.of(player("again", 2, 20)));

@@ -46,6 +46,22 @@ public class VnpayConfig {
     return enabled;
   }
 
+  /**
+   * Cấu hình VNPay đã đủ để ký payUrl chưa: cần mã merchant (TmnCode) và
+   * khoá bí mật (HashSecret).
+   *
+   * <p>Cần để chặn ở cửa TRƯỚC khi ghi đơn: nếu {@code enabled=true} nhưng
+   * thiếu khoá thì {@code VnpaySignatureService} ném lỗi LÚC ký payUrl — tức
+   * là sau khi đơn đã nằm trong DB, để lại đơn rác PENDING.
+   */
+  public boolean isConfigured() {
+    return !isBlank(tmnCode) && !isBlank(hashSecret);
+  }
+
+  private static boolean isBlank(String value) {
+    return value == null || value.trim().isEmpty();
+  }
+
   public String getTmnCode() {
     return tmnCode;
   }
