@@ -100,21 +100,55 @@ Cột, đặt kiểu theo đúng quy ước các entity sẵn có (`@Enumerated(
 Đọc tới đâu thì quy đổi `PENDING` → `EXPIRED` luôn nếu quá hạn (**lazy**, không dùng
 `@Scheduled`: Render free ngủ, lịch không chạy đều).
 
-**`POST /api/payments/ipn`** ← URL VNPay gọi
+**`GET` hoặc `POST /api/payments/ipn`** ← URL VNPay gọi (API 2.1.0 gọi bằng
+`GET`, API cũ gọi bằng `POST` — nhận CẢ HAI).
 - Verify `vnp_SecureHash`.
-- **Luôn trả HTTP 200** và bắt mọi lỗi trong thân hàm. `ConflictAdvice`
-  (`ConflictAdvice.java:16`) là `@RestControllerAdvice` — để exception nỏ ra thì
-  VNPay cứ retry mãi.
-- IPN tới sau `EXPIRED` vẫn nhận `PAID` (tiền đã vào). Không bao giờ trả 4xx.
+- Lỗi **nghiệp vụ** (chữ ký sai, đơn không tồn tại, giao dịch không thành công,
+  đã PAID, sai số tiền) → trả HTTP **200** kèm `RspCode` tương ứng.
+- Lỗi **hạ tầng** (DB lạnh, connection reset) → trả HTTP **503** + body
+  `{"RspCode":"99","Message":"..."}` để VNPay retry.
+  *Ruling mới (đảo ngược ràng buộc cũ "luôn trả HTTP 200"):* trả 200 khi lỗi
+  hạ tầng nghĩa là VNPay **không** retry ⇒ đơn kẹt PENDING ⇒ hết 15 phút thành
+  EXPIRED dù tiền ĐÃ vào. Xem `PaymentService.handleIpn` +
+  `PaymentInfrastructureAdvice`.
+- **VNPay quyết định retry dựa trên `RspCode` TRONG BODY**, không phải HTTP
+  status: `00`/`02` ⇒ kết thúc luồng; `01`/`04`/`97`/`99`/timeout ⇒ retry tối
+  đa 10 lần, cách nhau 5 phút. ⇒ mọi body lỗi hạ tầng PHẢI có `RspCode`.
+- Giao dịch **thất bại** (status khác mã thành công) trả `RspCode=02`
+  (mã KẾT THÚC luồng) chứ không phải `99`: retry 10 lần một giao dịch đã
+  thất bại ở ngân hàng thì không bao giờ thành công.
+- **Không** khai báo `consumes` ⇒ request sai Content-Type trả 200 thay vì 415
+  (415 khiến VNPay retry mãi một request vốn dĩ không bao giờ thành công).
+- IPN tới sau `EXPIRED` vẫn nhận `PAID` (tiền đã vào). Không bao giờ trả 4xx cho
+  lỗi nghiệp vụ.
 
-**`GET /api/payments/history?playerKey=`** — đơn mới nhất trước, tối đa 100.
+**`GET /api/payments/history?playerKey=`** — **CHỈ metadata** (orderId, status,
+amount, createdAt, expiresAt), **KHÔNG** có `riasecJson` và **KHÔNG** có
+`hollandCode`.
+- Vì sao: `playerKey` đoán được (`host-<mã phòng>`) và mã phòng nằm trong danh
+  sách phòng **công khai** ⇒ trả kèm nội dung báo cáo là lộ báo cáo của người
+  khác (kể cả đơn CHƯA thanh toán). `hollandCode` (1 chữ cái) cũng đủ để đoán
+  ra loại báo cáo của người khác ⇒ bỏ luôn (client không còn gọi endpoint này).
+- Nội dung báo cáo chỉ đọc được qua `GET /api/payments/{id}?playerKey=` — đã có
+  sẵn và **đã** kiểm tra chủ đơn (`findByIdAndPlayerKey`).
+- **Client** tự quản lý danh sách `orderId` của chính thiết bị này
+  (`SessionStore.myOrderIds`) và tra từng đơn bằng endpoint có kiểm tra chủ đơn
+  ⇒ không cần endpoint lịch sử công khai để xem lại báo cáo đã trả.
 
 ### Chữ ký VNPay — làm đúng hoặc hỏng
 
-- Thuật toán: **HMAC-SHA256** với `HashSecret`.
+- Thuật toán: **HMAC-SHA256** với `HashSecret` (API cũ). API 2.1.0 dùng
+  **HMAC-SHA512** — đổi bằng biến môi trường, không sửa code.
 - Ký lúc tạo đơn và xác minh IPN đều dùng chung cách: sắp xếp mọi key `vnp_*` theo
-  alphabet (loại `vnp_SecureHash`, loại giá trị null/rỗng), nối `key=value` bằng `&`,
-  HMAC-SHA256 rồi hex.
+  alphabet (loại `vnp_SecureHash`, loại giá trị null/rỗng), **URL-encode CẢ key
+  lẫn value** (`URLEncoder` UTF-8), nối `key=value` bằng `&`, HMAC rồi hex.
+- **BẤT BIẾN CỐT LÕI: dạng dùng để HASH phải BẰNG dạng dùng trong QUERY.**
+  Hash trên giá trị thô trong khi query gửi giá trị đã encode ⇒ gateway từ
+  chối mọi đơn, mọi IPN bị trả `RspCode=97` ⇒ đơn kẹt `PENDING` ⇒ hết hạn
+  `EXPIRED` dù tiền đã vào. Demo chính thức của VNPay (Java/PHP/C#) đều
+  URL-encode cả hai vế cho cả `hashData` lẫn `query`.
+- **Mọi giá trị gửi lên VNPay phải là tiếng Việt KHÔNG DẤU, không khoảng trắng.**
+  `vnp_OrderInfo` cố định là ASCII (`"Bao cao Holland"`); URL có dấu sẽ hỏng.
 - **`vnp_TxnRef` là khoá do ta sinh và cũng là thứ IPN gửi lại.** Tìm đơn bằng nó.
   (`vnp_TxnNo` là số VNPAY tự gán — tra bằng cái này sẽ không tìm thấy đơn nào.)
 - **Bắt buộc đối chiếu với tài liệu sandbox trước khi code.** Sai thuật toán thì
@@ -125,6 +159,20 @@ Cột, đặt kiểu theo đúng quy ước các entity sẵn có (`@Enumerated(
 Biến môi trường, **không hardcode**: `VNPAY_ENABLED`, `VNPAY_TMN_CODE`,
 `VNPAY_HASH_SECRET`, `VNPAY_RETURN_URL`, `VNPAY_IPN_URL`. Sandbox dùng
 `https://sandbox.vnpayment.vn`.
+
+Chọn BỘ GIAO THỨC VNPay (xem `server/DEPLOY.md` §2.3):
+
+| Biến | API cũ (mặc định) | API 2.1.0 |
+|---|---|---|
+| `VNPAY_BASE_URL` | `.../paymentgateway/paymenturl.htm` | `.../paymentv2/vpcpay.html` |
+| `VNPAY_COMMAND` | `pay_web` | `pay` |
+| `VNPAY_VERSION` | *(rỗng)* | `2.1.0` (bắt buộc) |
+| `VNPAY_ORDER_TYPE` | *(rỗng)* | ví dụ `other` (bắt buộc) |
+| `VNPAY_HASH_ALGORITHM` | `HmacSHA256` | `SHA512` |
+| `VNPAY_HASH_TYPE` | tuỳ chọn | **để rỗng** (2.1.0 không gửi `vnp_SecureHashType`) |
+
+Mã `vnp_TransactionStatus` báo THÀNH CÔNG cũng khác nhau: API cũ `01`, API 2.1.0
+`00` — nhầm là tiền đã vào mà đơn vẫn kẹt `PENDING`.
 
 Đưa `payment.amount` và `payment.ttlMinutes` vào `GameRulesConfig` (theo đúng cách
 `GameRulesConfig.java:46-55` đang làm cho luật chơi) và cho client đọc qua
@@ -168,11 +216,22 @@ phí. Không để người dùng bấm vào một trang chết.
 
 ## 8. Điều kiện thắng + Trang đánh giá Holland (đã chốt)
 
-**Nguồn:** `riasecJson` chụp sẵn lúc `finish()`.
+**Nguồn:** `riasecJson` chụp sẵn lúc `finish()` — **theo từng người chơi**
+(`room_player_riasec_snapshot`: `playerKey → JSON 6 điểm`).
 
 Phải chụp lúc đó vì phòng bị **xoá hẳn** sau 30 phút: `RoomJanitor.deleteFinished` xoá
 `Room` → cascade xoá `Player` → cascade xoá `Score`. Điểm RIASEC và `winPoints` biến mất
 hoàn toàn. Đây là ràng buộc thứ tự, không phải ghi chú.
+
+Vì sao **theo từng người**: báo cáo Holland là của riêng người mua. Ảnh chụp cộng dồn
+cả bàn thì mã Holland của một người bị tính từ điểm của người khác — sai hoàn toàn về
+mặt nghiệp vụ. `PaymentService.createOrder` đọc đúng dòng của người mua
+(`room.getRiasecSnapshotOf(playerKey)`).
+
+**Hệ quả phải nói rõ với người chơi:** phòng bị dọn ⇒ mất ảnh chụp ⇒ **không** tạo
+được báo cáo. Server trả 403 với câu tiếng Việt ("Ván đã kết thúc quá lâu — dữ liệu báo
+cáo không còn") thay vì im lặng tạo báo cáo rỗng. Ván **chưa** kết thúc thì cũng không
+bán (403 "Ván chưa kết thúc") — điểm lúc đó còn dở dang.
 
 **Cách tính:** cộng 6 nhóm RIASEC, nhóm cao nhất là mã Holland. Vẽ cả 6 nhóm dạng
 thanh ngang để thấy tỉ lệ.
@@ -221,6 +280,12 @@ Thêm vào màn hình chính:
 - `PENDING` chưa hạn: đếm ngược, nút "Thanh toán tiếp".
 - `EXPIRED`: ghi rõ đã hạn, không có nút.
 
+**Nguồn dữ liệu: danh sách `orderId` của chính thiết bị này** (client tự quản lý
+trong `SessionStore.myOrderIds`), mỗi đơn tra bằng
+`GET /api/payments/{id}?playerKey=` — endpoint này **kiểm tra chủ đơn**.
+Không dùng `GET /api/payments/history` (công khai theo `playerKey` đoán được) để lấy
+nội dung báo cáo.
+
 Dọn đơn cũ: làm **lazy trong lúc đọc lịch sử**, không dùng `@Scheduled` (Render ngủ).
 
 ## 10. Bảo mật
@@ -258,11 +323,42 @@ Test cho host check mới: theo mẫu `server/src/test/java/vn/careermap/service
   IPN trả 200 kể cả khi sai chữ ký, IPN tới sau `EXPIRED` vẫn ra `PAID`.
 - Thêm test điều kiện thắng: đúng 12 câu + 1 vòng thì đủ; 11 câu thì chưa.
 
+**Trạng thái sau vòng sửa cuối (xem `server/DEPLOY.md` và báo cáo Task 11):**
+
+Backend (`server/`, 147 test, 0 fail):
+
+| Nhóm | File test | Phủ |
+|---|---|---|
+| HTTP thanh toán | `web/PaymentControllerTest.java` | IPN sai chữ ký → 200 + `RspCode=97`; đơn không tồn tại → 200 + `01`; IPN hợp lệ → 200 + `00` + đơn `PAID`; thiếu param → 200; **Content-Type sai → không 415**; lỗi hạ tầng → **5xx**; lịch sử **không** có `riasecJson`; đơn của người khác → 404 |
+| HTTP kết thúc ván | `web/GameFinishControllerTest.java` | host → 200; khách → 403; `FinishRequest` **không** có field `winnerKey` |
+| Nghiệp vụ đơn | `service/PaymentServiceTest.java` | ván chưa kết thúc → 403; phòng đã bị dọn → 403; không có ảnh chụp → 403; ảnh chụp **đúng của người mua**; 2 tab bấm cùng lúc → **chỉ 1 đơn PENDING**; không gửi `vnp_TxnExpireDate`; có `vnp_OrderInfo` + `vnp_IpAddr`; base-url/thuật toán đổi được bằng cấu hình |
+| Chữ ký | `service/VnpaySignatureTest.java` | SHA256 → 64 hex; SHA512 → 128 hex; tên ngắn `SHA512` ≡ `HmacSHA512` |
+| IPN | `service/PaymentIpnTest.java` | lỗi hạ tầng phải **ném ra** (không trả 200) |
+| Ảnh chụp | `service/GameFinishTest.java` | ảnh chụp **per-player**, không cộng dồn cả bàn |
+
+Frontend (`test/`, không commit):
+
+| Nhóm | File test | Phủ |
+|---|---|---|
+| Deep-link VNPay | `payment_route_test.dart` | `defaultRouteNameTestValue` **có query string** → vẫn tới `PaymentPage` |
+| Lịch sử | `payment_history_test.dart` | tra theo `orderId` của chính thiết bị, không theo `playerKey` |
+| Phiên | `session_store_test.dart` | `myOrderIds`, không ghi đè đơn PENDING còn hạn |
+| Kết thúc ván | `finish_request_test.dart` | client **không** gửi `winnerKey` |
+| Màn kết quả | `game_result_offer_test.dart` | chưa đủ điều kiện thì **không** lộ mã Holland |
+
 ## 13. Việc phải làm (phía người dùng, chạy song song)
 
 - [ ] Đăng ký sandbox `https://sandbox.vnpayment.vn/devreg/` → lấy `TmnCode`, `HashSecret`
 - [ ] Tạo monitor UptimeRobot: `GET https://career-map-server.onrender.com/health`, 5 phút
-- [ ] Thêm biến môi trường VNPay vào Render
+- [ ] Thêm biến môi trường VNPay vào Render — **5 biến bắt buộc**:
+      `VNPAY_ENABLED=true`, `VNPAY_TMN_CODE`, `VNPAY_HASH_SECRET`,
+      `VNPAY_RETURN_URL=https://career-map-2026-b08f1.web.app/ket-qua-thanh-toan`,
+      `VNPAY_IPN_URL=https://<server>.onrender.com/api/payments/ipn`
+- [ ] Deploy backend bằng **Web Service thủ công** (KHÔNG dùng Blueprint: `render.yaml`
+      nằm trong `server/` mà Render chỉ đọc `render.yaml` ở gốc repo) — xem `server/DEPLOY.md`
+- [ ] Chạy **1 giao dịch thật** trên sandbox để xác nhận chữ ký đúng. Nếu gateway yêu cầu
+      SHA512: đổi `VNPAY_HASH_ALGORITHM=SHA512` + `VNPAY_BASE_URL=.../paymentv2/vpcpay.html`
+      ⇒ **không** cần sửa code, không cần build lại
 
 Không có 2 việc đầu thì backend dựng được nhưng không tạo được đơn thật.
 
