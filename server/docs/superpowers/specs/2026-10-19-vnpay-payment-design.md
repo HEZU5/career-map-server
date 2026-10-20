@@ -1,6 +1,3 @@
-<!-- Bản COPY của docs/superpowers/specs/2026-10-19-vnpay-payment-design.md (nằm ngoài server/, không được git track). -->
-<!-- Đặt bản copy ở đây để file spec được track CÙNG backend. -->
-
 # Thiết kế: Thanh toán VNPay + Đánh giá Holland
 
 Ngày: 2026-10-19 · Trạng thái: chờ duyệt
@@ -252,9 +249,16 @@ nhau một chỗ thắng duy nhất.
 completedLaps >= 1 && totalAnswered >= 12     // GameService.java:221
 ```
 
-Cơ sở của con số 12: bàn có **24 ô RIASEC = 4 câu mỗi vòng** (`board.dart:33`), nên 12
-câu = 3 vòng = **mỗi nhóm RIASEC được hỏi 2 lần** — mức tối thiểu để báo cáo có ý
-nghĩa. `totalAnswered` đáng tin vì được cộng ở *mọi* lần trả lời (`GameService.java:149`),
+Cơ sở của con số 12: bàn có **24 ô RIASEC trên tổng 53 ô** (`board.dart:55`) ⇒
+trung bình **~24 câu hỏi mỗi vòng**, và 6 nhóm RIASEC xen kẽ nhau nên 12 câu đã cho
+**mỗi nhóm khoảng 2 câu** — mức tối thiểu để báo cáo có ý nghĩa.
+
+Vì vậy **điều kiện gắn thực sự là `completedLaps >= 1`** (phải đi hết một vòng 53 ô,
+tức khoảng 15 lượt tung với xúc xắc trung bình 3.5); `totalAnswered >= 12` thì đạt
+sớm hơn nhiều — khoảng nửa vòng đầu. Cả hai ngưỡng đều chỉnh được bằng biến môi
+trường `WIN_MIN_LAPS` / `WIN_MIN_ANSWERS` mà không cần build lại.
+
+`totalAnswered` đáng tin vì được cộng ở *mọi* lần trả lời (`GameService.java:149`),
 khác với `winPoints` chỉ cộng ở thẻ Cơ hởi/Thử thách và gần như luôn bằng 0 khi chơi
 bình thường.
 
