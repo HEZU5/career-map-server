@@ -35,10 +35,18 @@ public class GameTickScheduler {
 
   @Scheduled(fixedDelayString = "${game.tick-ms:1000}")
   public void tickTurns() {
+    // 1. Trước hết bỏ qua lượt của người đã vắng mặt lâu (không bắt cả bàn
+    //    ngồi nhìn), 2. sau đó mới xử lý lượt hết hạn theo deadline.
+    //
+    //    Mỗi bước có try/catch RIÊNG: trước đây chung một try/catch nên lỗi ở
+    //    bước 1 (ví dụ LazyInitializationException khi đọc collection lazy của
+    //    Room) nuốt luôn bước 2 ⇒ cả nhịp quét lượt hết hạn không bao giờ chạy.
     try {
-      // 1. Trước hết bỏ qua lượt của người đã vắng mặt lâu (không bắt cả bàn
-      //    ngồi nhìn), 2. sau đó mới xử lý lượt hết hạn theo deadline.
       turnScheduler.skipAwayTurns();
+    } catch (Exception e) {
+      System.err.println("[tick] bo qua luot vang lỗi: " + e.getMessage());
+    }
+    try {
       turnScheduler.sweepExpiredTurns();
     } catch (Exception e) {
       // Không log stack hết động dài — chỉ gối lỗi để lỗi 1 phòng không lặp vô hạn.

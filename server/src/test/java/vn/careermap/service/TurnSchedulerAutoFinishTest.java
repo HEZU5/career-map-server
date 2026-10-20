@@ -34,6 +34,10 @@ import vn.careermap.web.dto.GameSnapshot;
  * <p>Đường sửa: cả hai đường (client tự tung và server tự tung) đi qua cùng
  * một hàm {@code GameService.maybeAutoFinish}.
  *
+ * <p>Phần xử lý lượt của từng phòng nằm ở {@link TurnSweepProcessor} (mỗi phòng
+ * một transaction riêng — {@code REQUIRES_NEW}); {@link TurnScheduler} chỉ quét
+ * danh sách phòng rồi gọi xuống từng phòng.
+ *
  * <p>Thuần JUnit + Mockito, không Spring context, không database.
  */
 class TurnSchedulerAutoFinishTest {
@@ -95,10 +99,15 @@ class TurnSchedulerAutoFinishTest {
   private TurnScheduler scheduler(Room room, TurnCoordinator turns) {
     RoomQueryService rooms = mock(RoomQueryService.class);
     when(rooms.activeRooms()).thenReturn(List.of(room));
+    // Mỗi phòng được nạp LẠI trong transaction riêng của nó — xem
+    // TurnSweepProcessor (phải nạp lại, không dùng entity của transaction ngoài).
+    when(rooms.findByCode(room.getCode())).thenReturn(Optional.of(room));
     when(rooms.onlineCount(any(), any())).thenReturn(1);
     GameService gameService = gameService(turns);
-    return new TurnScheduler(
-        rooms, turns, broadcaster, new GameSnapshotBuilder(RULES), gameService);
+    TurnSweepProcessor processor =
+        new TurnSweepProcessor(
+            rooms, turns, broadcaster, new GameSnapshotBuilder(RULES), gameService);
+    return new TurnScheduler(rooms, processor);
   }
 
   // ── Server tự tung ────────────────────────────────────────────────────────
