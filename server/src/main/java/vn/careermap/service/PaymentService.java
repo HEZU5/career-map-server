@@ -81,7 +81,9 @@ public class PaymentService {
    * @param playerKey khoá người chơi (không phải ID số)
    * @return thông tin đơn + URL thanh toán sandbox
    * @throws ResponseStatusException 503 nếu thanh toán VNPay đang tắt hoặc
-   *                                  cấu hình chưa đủ, 403 nếu người chơi không
+   *                                  cấu hình chưa đủ (thiếu mã merchant /
+   *                                  khoá bí mật / URL trả về / URL IPN),
+   *                                  403 nếu người chơi không
    *                                  tồn tại hoặc chưa đủ điều kiện thắng
    */
   @Transactional
@@ -94,16 +96,20 @@ public class PaymentService {
           HttpStatus.SERVICE_UNAVAILABLE,
           "Thanh toán VNPay đang tạm thời không khả dụng. Vui lòng thử lại sau.");
     }
-    // Bật cờ nhưng thiếu mã merchant / khoá bí mật -> chặn ở CỬA, TRƯỚC khi
-    // đụng bất kỳ thứ gì. Nếu để lọt, VnpaySignatureService sẽ ném lỗi LÚC
-    // ký payUrl — tức là SAU khi orderRepository.save(order) -> còn đơn rác
-    // PENDING nằm trong DB.
+    // Bật cờ nhưng cấu hình chưa đủ -> chặn ở CỬA, TRƯỚC khi đụng bất kỳ
+    // thứ gì. Nếu để lọt:
+    //  - thiếu HashSecret -> VnpaySignatureService ném lỗi LÚC ký payUrl,
+    //    tức là SAU khi orderRepository.save(order) -> còn đơn rác PENDING.
+    //  - thiếu ReturnUrl  -> người chơi thanh toán xong không được đưa về app.
+    //  - thiếu IpnUrl     -> server KHÔNG nhận IPN -> đơn kẹt PENDING -> hết
+    //    15 phút thành EXPIRED dù người chơi ĐÃ trả tiền.
     if (!vnpayConfig.isConfigured()) {
-      log.warn(
-          "VNPay đang bật nhưng cấu hình chưa đủ (thiếu mã merchant hoặc khoá bí mật) - chặn tạo đơn.");
+      String missing = String.join(", ", vnpayConfig.missingSettings());
+      log.warn("VNPay đang bật nhưng cấu hình chưa đủ (thiếu: {}) - chặn tạo đơn.", missing);
       throw new ResponseStatusException(
           HttpStatus.SERVICE_UNAVAILABLE,
-          "Thanh toán VNPay chưa được cấu hình đầy đủ. Vui lòng thử lại sau.");
+          "Thanh toán VNPay chưa được cấu hình đầy đủ (thiếu " + missing
+              + "). Vui lòng thử lại sau.");
     }
 
     Player player = playerRepository

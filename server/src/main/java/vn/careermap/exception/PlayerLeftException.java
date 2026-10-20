@@ -6,6 +6,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 @ResponseStatus(HttpStatus.CONFLICT)
 public class PlayerLeftException extends RuntimeException {
   public PlayerLeftException(String playerKey) {
-    super("Player already left: " + playerKey);
+    super("Người chơi đã rời phòng: " + playerKey);
   }
 }

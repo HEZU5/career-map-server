@@ -6,6 +6,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 @ResponseStatus(HttpStatus.CONFLICT)
 public class RoomFullException extends RuntimeException {
   public RoomFullException(String code) {
-    super("Room is full: " + code);
+    super("Phòng " + code + " đã đầy");
   }
 }

@@ -230,6 +230,83 @@ class PaymentServiceTest {
     verify(orderRepository, never()).save(any());
   }
 
+  /**
+   * Thiếu {@code VNPAY_RETURN_URL}: người chơi thanh toán xong KHÔNG được đưa
+   * về trang kết quả của app. Phải chặn ở cửa, không ghi đơn.
+   */
+  @Test
+  void vnpayBatNhungThieuUrlTraVeThiKhongTaoDuocDon() {
+    VnpayConfig noReturnUrl =
+        new VnpayConfig(true, "TMNCODE", "secret", "", "https://app.example/ipn");
+    PaymentService brokenService = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(noReturnUrl),
+        noReturnUrl);
+
+    // Người chơi CÓ THẬT và đủ điều kiện thắng: nếu không chặn ở cửa thì đơn
+    // sẽ được ghi vào DB với payUrl thiếu vnp_ReturnUrl.
+    when(playerRepository.findByPlayerKey("winner"))
+        .thenReturn(Optional.of(player("winner", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "winner", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> brokenService.createOrder("winner"))
+        .satisfies(thrown -> {
+          assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+          ResponseStatusException ex = (ResponseStatusException) thrown;
+          assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+          assertThat(ex.getReason()).contains("cấu hình");
+          assertThat(ex.getReason()).contains("VNPAY_RETURN_URL");
+        });
+
+    verify(playerRepository, never()).findByPlayerKey(any());
+    verify(gameService, never()).checkWinner(any());
+    verify(orderRepository, never()).save(any());
+  }
+
+  /**
+   * Thiếu {@code VNPAY_IPN_URL}: server KHÔNG nhận được IPN từ VNPay → đơn kẹt
+   * PENDING → hết 15 phút thành EXPIRED dù người chơi ĐÃ trả tiền. Phải chặn
+   * ở cửa, không ghi đơn.
+   */
+  @Test
+  void vnpayBatNhungThieuUrlIpnThiKhongTaoDuocDon() {
+    VnpayConfig noIpnUrl =
+        new VnpayConfig(true, "TMNCODE", "secret", "https://app.example/return", "");
+    PaymentService brokenService = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(noIpnUrl),
+        noIpnUrl);
+
+    when(playerRepository.findByPlayerKey("winner"))
+        .thenReturn(Optional.of(player("winner", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "winner", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> brokenService.createOrder("winner"))
+        .satisfies(thrown -> {
+          assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+          ResponseStatusException ex = (ResponseStatusException) thrown;
+          assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+          assertThat(ex.getReason()).contains("cấu hình");
+          assertThat(ex.getReason()).contains("VNPAY_IPN_URL");
+        });
+
+    verify(playerRepository, never()).findByPlayerKey(any());
+    verify(gameService, never()).checkWinner(any());
+    verify(orderRepository, never()).save(any());
+  }
+
   @Test
   void taoLaiThiTraLaiDonCungDangCho() {
     when(playerRepository.findByPlayerKey("again"))

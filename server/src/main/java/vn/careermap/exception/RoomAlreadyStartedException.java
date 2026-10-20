@@ -6,6 +6,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 @ResponseStatus(HttpStatus.CONFLICT)
 public class RoomAlreadyStartedException extends RuntimeException {
   public RoomAlreadyStartedException(String code) {
-    super("Room already started: " + code);
+    super("Phòng " + code + " đã bắt đầu");
   }
 }

@@ -7,6 +7,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 @ResponseStatus(HttpStatus.CONFLICT)
 public class TurnBusyException extends RuntimeException {
   public TurnBusyException(String code) {
-    super("Turn is busy in room: " + code);
+    super("Lượt trong phòng " + code + " đang bận");
   }
 }
