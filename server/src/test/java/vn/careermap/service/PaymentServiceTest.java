@@ -137,6 +137,32 @@ class PaymentServiceTest {
   }
 
   @Test
+  void vnpayTatThiKhongTaoDuocDon() {
+    VnpayConfig disabled = new VnpayConfig(
+        false, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn");
+    PaymentService offService = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(disabled),
+        disabled);
+
+    assertThatThrownBy(() -> offService.createOrder("winner"))
+        .satisfies(thrown -> {
+          assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+          ResponseStatusException ex = (ResponseStatusException) thrown;
+          assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+          assertThat(ex.getReason()).contains("khả dụng");
+        });
+
+    // Chặn ở cửa: không tra người chơi, không tạo đơn rác trong DB.
+    verify(playerRepository, never()).findByPlayerKey(any());
+    verify(gameService, never()).checkWinner(any());
+    verify(orderRepository, never()).save(any());
+  }
+
+  @Test
   void taoLaiThiTraLaiDonCungDangCho() {
     when(playerRepository.findByPlayerKey("again"))
         .thenReturn(Optional.of(player("again", 2, 20)));

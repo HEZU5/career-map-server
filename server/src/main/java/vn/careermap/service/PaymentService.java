@@ -80,11 +80,21 @@ public class PaymentService {
    *
    * @param playerKey khoá người chơi (không phải ID số)
    * @return thông tin đơn + URL thanh toán sandbox
-   * @throws ResponseStatusException 403 nếu người chơi không tồn tại hoặc chưa
-   *                                  đủ điều kiện thắng
+   * @throws ResponseStatusException 503 nếu thanh toán VNPay đang tắt, 403 nếu
+   *                                  người chơi không tồn tại hoặc chưa đủ điều
+   *                                  kiện thắng
    */
   @Transactional
   public CreatePaymentResponse createOrder(String playerKey) {
+    // Thanh toán đang tắt -> KHÔNG tạo đơn rác (payUrl rỗng/không ký được).
+    // Client đã ẩn nút mua khi vnpay.enabled=false, nhưng client cũ hoặc
+    // gọi API trực tiếp vẫn tới được đây — chặn ở server là lớp chắn cuối.
+    if (!vnpayConfig.isEnabled()) {
+      throw new ResponseStatusException(
+          HttpStatus.SERVICE_UNAVAILABLE,
+          "Thanh toán VNPay đang tạm thời không khả dụng. Vui lòng thử lại sau.");
+    }
+
     Player player = playerRepository
         .findByPlayerKey(playerKey)
         .orElseThrow(() -> new ResponseStatusException(
