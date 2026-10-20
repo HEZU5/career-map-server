@@ -117,7 +117,12 @@ class TurnSweepIsolationTest {
     PlayerRepository players = mock(PlayerRepository.class);
     GameService gameService =
         new GameService(
-            players, broadcaster, new GameSnapshotBuilder(RULES), turns, RULES);
+            players,
+            broadcaster,
+            new GameSnapshotBuilder(RULES),
+            turns,
+            RULES,
+            new CardEffectRegistry());
 
     TurnSweepProcessor processor =
         new TurnSweepProcessor(
@@ -139,7 +144,12 @@ class TurnSweepIsolationTest {
     PlayerRepository players = mock(PlayerRepository.class);
     GameService gameService =
         new GameService(
-            players, broadcaster, new GameSnapshotBuilder(RULES), turns, RULES);
+            players,
+            broadcaster,
+            new GameSnapshotBuilder(RULES),
+            turns,
+            RULES,
+            new CardEffectRegistry());
 
     TurnSweepProcessor processor =
         new TurnSweepProcessor(

@@ -62,7 +62,8 @@ class GameFinishTest {
         mock(GameBroadcaster.class),
         new GameSnapshotBuilder(rules),
         mock(TurnCoordinator.class),
-        rules);
+        rules,
+        new CardEffectRegistry());
   }
 
   private Room room(String ownerKey, Player... members) {

@@ -64,7 +64,8 @@ class GameAutoFinishTest {
     when(players.save(any(Player.class))).thenAnswer(call -> call.getArgument(0));
     broadcaster = mock(GameBroadcaster.class);
     turns = mock(TurnCoordinator.class);
-    return new GameService(players, broadcaster, new GameSnapshotBuilder(rules), turns, rules);
+    return new GameService(
+        players, broadcaster, new GameSnapshotBuilder(rules), turns, rules, new CardEffectRegistry());
   }
 
   private Room room(String ownerKey, Player... members) {

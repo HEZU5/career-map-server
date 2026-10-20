@@ -54,7 +54,8 @@ class TurnSchedulerAutoFinishTest {
     when(players.findByPlayerKey(anyString()))
         .thenAnswer(call -> Optional.ofNullable(byKey.get(call.<String>getArgument(0))));
     broadcaster = mock(GameBroadcaster.class);
-    return new GameService(players, broadcaster, new GameSnapshotBuilder(RULES), turns, RULES);
+    return new GameService(
+        players, broadcaster, new GameSnapshotBuilder(RULES), turns, RULES, new CardEffectRegistry());
   }
 
   private Room room(String ownerKey, Player... members) {

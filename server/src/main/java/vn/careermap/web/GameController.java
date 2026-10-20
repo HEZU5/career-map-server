@@ -13,6 +13,8 @@ import vn.careermap.domain.RiasecCategory;
 import vn.careermap.service.GameService;
 import vn.careermap.web.dto.AnswerRequest;
 import vn.careermap.web.dto.AnswerResponse;
+import vn.careermap.web.dto.BonusEffectRequest;
+import vn.careermap.web.dto.BonusEffectResponse;
 import vn.careermap.web.dto.DiceResponse;
 import vn.careermap.web.dto.FinishRequest;
 import vn.careermap.web.dto.GameSnapshot;
@@ -49,6 +51,22 @@ public class GameController {
   @PostMapping("/game/answer")
   public AnswerResponse answer(@RequestBody AnswerRequest request) {
     return gameService.answer(request);
+  }
+
+  /**
+   * Áp hiệu ứng lá Cơ hội / Thử thách.
+   *
+   * <p>Client chỉ gửi {@code cardId} (+ {@code choice}/{@code targetPlayerKey}
+   * cho lá cần chọn) — KHÔNG gửi số điểm. Server tự tra bảng hiệu ứng, tự tính
+   * điểm và tự áp hiệu ứng thật (tiến thêm ô, chơi thêm lượt, cộng cho cả
+   * bàn...).
+   *
+   * <p>Đây là đường DUY NHẤT để nhận điểm từ lá bài: đường {@code /game/answer}
+   * cũ vẫn còn để dùng cho câu hỏi RIASEC.
+   */
+  @PostMapping("/game/bonus-effect")
+  public BonusEffectResponse bonusEffect(@RequestBody BonusEffectRequest request) {
+    return gameService.applyBonusEffect(request);
   }
 
   @GetMapping("/game/score/{playerId}")

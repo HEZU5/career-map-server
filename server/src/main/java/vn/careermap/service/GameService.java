@@ -1,6 +1,7 @@
 package vn.careermap.service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import vn.careermap.config.GameRulesConfig;
+import vn.careermap.domain.BonusEffect;
 import vn.careermap.domain.Player;
 import vn.careermap.domain.RiasecCategory;
 import vn.careermap.domain.Room;
@@ -24,6 +26,8 @@ import vn.careermap.exception.TurnBusyException;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.AnswerRequest;
 import vn.careermap.web.dto.AnswerResponse;
+import vn.careermap.web.dto.BonusEffectRequest;
+import vn.careermap.web.dto.BonusEffectResponse;
 import vn.careermap.web.dto.DiceResponse;
 import vn.careermap.web.dto.FinishRequest;
 import vn.careermap.web.dto.GameSnapshot;
@@ -43,18 +47,21 @@ public class GameService {
   private final GameSnapshotBuilder snapshotBuilder;
   private final TurnCoordinator turns;
   private final GameRulesConfig rules;
+  private final CardEffectRegistry cardEffects;
 
   public GameService(
       PlayerRepository playerRepository,
       GameBroadcaster broadcaster,
       GameSnapshotBuilder snapshotBuilder,
       TurnCoordinator turns,
-      GameRulesConfig rules) {
+      GameRulesConfig rules,
+      CardEffectRegistry cardEffects) {
     this.playerRepository = playerRepository;
     this.broadcaster = broadcaster;
     this.snapshotBuilder = snapshotBuilder;
     this.turns = turns;
     this.rules = rules;
+    this.cardEffects = cardEffects;
   }
 
   /**
@@ -200,7 +207,11 @@ public class GameService {
     if (points > 0) {
       player.scoreOf(targetCategory).addPoints(points);
     }
+    // Điểm chiến thắng: server CHỈ nhận tối đa số điểm mà chính server quyết
+    // định (bảng lá / luật ô ⭐). Client khai nhiều hơn bị cắt ⇒ hết chỗ tự
+    // khai điểm. Xem {@link #winPointsCap(Player, AnswerRequest)}.
     int winPoints = request.winPoints() != null ? request.winPoints() : 0;
+    winPoints = Math.max(0, Math.min(winPoints, winPointsCap(player, request)));
     if (winPoints > 0) {
       player.addWinPoints(winPoints);
     }
@@ -212,6 +223,36 @@ public class GameService {
     return new AnswerResponse(true, points, category.name(), player.getTotalAnswered(), winPoints);
   }
 
+  /**
+   * Trần số Điểm Chiến thắng mà server chấp nhận trên đường CŨ {@code
+   * /game/answer}.
+   *
+   * <p>Đường cũ vẫn phải còn (client cũ vẫn gửi {@code winPoints}, và nút "không
+   * hoàn thành" gửi {@code winPoints: 0} — phải giữ nguyên 0), nên không thể bỏ
+   * hẳn tham số của client ngay lúc này. Thay vào đó server chỉ nhận TỐI ĐA số
+   * điểm mà bảng lá / luật bàn quyết định:
+   *
+   * <ul>
+   *   <li>Lá bài (client gửi {@code questionId} = mã lá có dấu) ⇒ lấy trong
+   *       {@link CardEffectRegistry}.
+   *   <li>Đứng trên ô ⭐ ⇒ 1 điểm theo luật bàn.
+   *   <li>Còn lại (câu hỏi RIASEC) ⇒ 0.
+   * </ul>
+   *
+   * <p>Hiệu ứng THẬT của lá thì chỉ đường mới {@code /game/bonus-effect} áp —
+   * đường cũ chỉ cộng điểm.
+   */
+  private int winPointsCap(Player player, AnswerRequest request) {
+    CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(request.questionId());
+    if (spec != null) {
+      return (int) Math.min(spec.winPoints(), Integer.MAX_VALUE);
+    }
+    if (TurnCoordinator.pathTile(player.getCurrentPosition()) == TileType.STAR) {
+      return 1;
+    }
+    return 0;
+  }
+
   /** Đóng thẻ và chuyển sang lượt kế tiếp — dùng chung cho trả lời và hết giờ. */
   void closeAnswerTurn(Room room) {
     room.setPendingAnswer(false);
@@ -220,6 +261,288 @@ public class GameService {
     room.advanceTurn();
     turns.startNextTurn(room, Instant.now());
   }
+
+  // ── Hiệu ứng lá Cơ hội / Thử thách ───────────────────────────────────────
+
+  /**
+   * Áp hiệu ứng của lá Cơ hội / Thử thách — SERVER là nguồn sự thật.
+   *
+   * <p>Trước đây client tự khai {@code winPoints} rồi gửi lên, server tin theo
+   * ⇒ ai cũng tự khai điểm tuỳ ý. Nay request KHÔNG có field điểm: server tự
+   * tra {@link CardEffectRegistry} theo {@code cardId}, tự tính điểm và tự áp
+   * hiệu ứng thật (tiến thêm ô, chơi thêm lượt, cộng cho cả bàn...).
+   *
+   * <p>Chỉ người đang ở lượt trả lời mới được rút lá: lượt đã đóng thì gọi lại
+   * bị chặn ⇒ không farm được điểm bằng cách spam endpoint này.
+   *
+   * <p>Lá lạ → 400. Lựa chọn không hợp lệ với lá đó → 400. Người được chọn
+   * không ở trong phòng (hoặc đã rời phòng) → 403.
+   */
+  @Transactional
+  public BonusEffectResponse applyBonusEffect(BonusEffectRequest request) {
+    Player player = requirePlayer(request.playerId());
+    CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(request.cardId());
+    if (spec == null) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Lá bài không hợp lệ: " + request.cardId());
+    }
+    String choice = normalize(request.choice());
+    requireValidChoice(spec, choice);
+
+    Room room = player.getRoom();
+    boolean inRoom = room != null && room.isActive() && !room.isFinished();
+    if (inRoom) {
+      requireAnswerTurn(room, player);
+    }
+
+    List<String> awarded = new ArrayList<>();
+    long winPoints = 0;
+    Integer from = null;
+    Integer to = null;
+    String message;
+
+    // Rút lá = đã trả lời 1 câu ở ô đích: đếm vào `totalAnswered` như đường cũ
+    // (`/game/answer`) để ngưỡng thắng (số câu đã trả lời) không bị nặng hơn.
+    player.incrementTotalAnswered();
+
+    switch (spec.effect()) {
+      case NONE -> {
+        winPoints = award(player, spec.winPoints());
+        awarded.add(player.getPlayerKey());
+        closeTurn(room, inRoom);
+        message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng.";
+      }
+      case EXTRA_ROLL -> {
+        winPoints = award(player, spec.winPoints());
+        awarded.add(player.getPlayerKey());
+        // Lượt MỚI cho chính người này (được tung tiếp ngay) — không chuyển lượt.
+        reopenRollTurn(room, player, inRoom);
+        message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng và được chơi thêm một lượt ngay!";
+      }
+      case MOVE_2, MOVE_3 -> {
+        int steps = spec.effect() == BonusEffect.MOVE_2 ? 2 : 3;
+        MoveResult move = moveForward(player, room, steps, inRoom);
+        from = move.from();
+        to = move.to();
+        message = move.message();
+      }
+      case PICK_PLAYER_PLUS1 -> {
+        Player target = requireTargetInRoom(room, request.targetPlayerKey(), inRoom);
+        winPoints = award(player, spec.winPoints());
+        awarded.add(player.getPlayerKey());
+        if (!target.getPlayerKey().equals(player.getPlayerKey())) {
+          award(target, spec.winPoints());
+          awarded.add(target.getPlayerKey());
+        }
+        closeTurn(room, inRoom);
+        message =
+            "Bạn và người bạn đồng hành cùng nhận +" + spec.winPoints() + " Điểm Chiến thắng.";
+      }
+      case ALL_PLAYERS_PLUS1 -> {
+        winPoints = award(player, spec.winPoints());
+        awarded.add(player.getPlayerKey());
+        if (inRoom) {
+          for (Player other : room.getPlayers()) {
+            if (other.isLeft() || other.getPlayerKey().equals(player.getPlayerKey())) {
+              continue;
+            }
+            award(other, spec.winPoints());
+            awarded.add(other.getPlayerKey());
+          }
+        }
+        closeTurn(room, inRoom);
+        message = "Tất cả người chơi cùng nhận +" + spec.winPoints() + " Điểm Chiến thắng.";
+      }
+      case PLUS3_OR_MOVE_2 -> {
+        if (CardEffectRegistry.CHOICE_MOVE_2.equals(choice)) {
+          MoveResult move = moveForward(player, room, 2, inRoom);
+          from = move.from();
+          to = move.to();
+          message = move.message();
+        } else {
+          winPoints = award(player, spec.winPoints());
+          awarded.add(player.getPlayerKey());
+          closeTurn(room, inRoom);
+          message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng.";
+        }
+      }
+      default ->
+          throw new ResponseStatusException(
+              HttpStatus.BAD_REQUEST, "Hiệu ứng không hợp lệ: " + spec.effect());
+    }
+
+    // Đi qua ô START BẰNG HIỆU ỨNG cũng phải được xét thắng — cùng đường với
+    // lúc tung xúc xắc (xem {@link #maybeAutoFinish}).
+    if (inRoom && to != null) {
+      maybeAutoFinish(room, player, true);
+    }
+    if (inRoom && !room.isFinished()) {
+      broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
+    }
+    return new BonusEffectResponse(
+        spec.effect().name(), winPoints, from, to, List.copyOf(awarded), message);
+  }
+
+  /**
+   * Người chơi theo key — KHÔNG tự tạo dòng {@code players} mới.
+   *
+   * <p>Endpoint này công khai: nếu tạo dòng mới cho key lạ thì bảng
+   * {@code players} phình vô hạn (Player không ở phòng nào thì không janitor
+   * nào dọn) — cùng lý do {@link #checkWinner(WinnerRequest)} đã sửa.
+   */
+  private Player requirePlayer(String playerKey) {
+    String key = playerKey == null ? "" : playerKey.trim();
+    if (key.isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thiếu mã người chơi.");
+    }
+    Player player =
+        playerRepository
+            .findByPlayerKey(key)
+            .orElseThrow(
+                () ->
+                    new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Không tìm thấy người chơi " + key + "."));
+    if (player.isLeft()) {
+      throw new PlayerLeftException(player.getPlayerKey());
+    }
+    return player;
+  }
+
+  /**
+   * Lựa chọn của người chơi phải nằm trong {@code allowedChoices} của lá.
+   *
+   * <p>Lá không cần chọn thì client KHÔNG được gửi {@code choice} (gửi bừa là
+   * sai luật ⇒ 400).
+   */
+  private void requireValidChoice(CardEffectRegistry.CardEffectSpec spec, String choice) {
+    if (spec.requiresChoice()) {
+      if (choice == null || !spec.allowedChoices().contains(choice)) {
+        throw new ResponseStatusException(
+            HttpStatus.BAD_REQUEST,
+            "Lá bài này cần chọn: " + String.join(" hoặc ", spec.allowedChoices()) + ".");
+      }
+      return;
+    }
+    if (choice != null) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Lá bài này không có lựa chọn để chọn.");
+    }
+  }
+
+  /** Chỉ người đang ở lượt trả lời mới được áp hiệu ứng lá bài. */
+  private void requireAnswerTurn(Room room, Player player) {
+    if (room.getTurnPhase() != TurnPhase.WAITING_ANSWER) {
+      throw new TurnBusyException(room.getCode());
+    }
+    if (room.getTurnPlayerKey() == null
+        || !room.getTurnPlayerKey().equals(player.getPlayerKey())) {
+      throw new NotYourTurnException(room.getCode());
+    }
+  }
+
+  /** Đóng lượt trả lời và chuyển lượt cho người kế tiếp. */
+  private void closeTurn(Room room, boolean inRoom) {
+    if (!inRoom) {
+      return;
+    }
+    closeAnswerTurn(room);
+  }
+
+  /**
+   * Mở lượt tung MỚI cho chính người vừa rút lá (lá "được chơi thêm 1 lượt").
+   *
+   * <p>Không chuyển lượt: người đó được tung tiếp ngay, còn những người khác
+   * chờ.
+   */
+  private void reopenRollTurn(Room room, Player player, boolean inRoom) {
+    if (!inRoom) {
+      return;
+    }
+    room.setPendingAnswer(false);
+    room.setLastDice(null);
+    room.clearTurn();
+    room.beginTurn(
+        player, TurnPhase.WAITING_ROLL, Instant.now().plusSeconds(rules.turnRollS), false);
+  }
+
+  /**
+   * Người được chọn cho lá "chọn 1 người chơi" — phải còn ở trong phòng.
+   *
+   * <p>Người đã rời phòng vẫn nằm trong {@code room.getPlayers()} nên phải loại
+   * riêng, nếu không ai cũng "chia" điểm cho người đã bỏ đi.
+   */
+  private Player requireTargetInRoom(Room room, String targetKey, boolean inRoom) {
+    String key = targetKey == null ? "" : targetKey.trim();
+    if (key.isEmpty()) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Chưa chọn người chơi cho lá bài này.");
+    }
+    Player target = inRoom ? room.findPlayer(key) : null;
+    if (target == null || target.isLeft()) {
+      throw new ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Người chơi được chọn không ở trong phòng.");
+    }
+    return target;
+  }
+
+  /**
+   * Tiến quân N ô theo CHIỀU ĐI của bàn ({@code position - N}, {@code
+   * Math.floorMod}) — y hệt {@link TurnCoordinator#rollAndMove} nên không lệch
+   * luật.
+   *
+   * <p>Vượt qua ô START thì cộng 1 vòng: nếu không, người chơi đi qua START bằng
+   * hiệu ứng sẽ không bao giờ đủ điều kiện thắng.
+   *
+   * <p>Đích là ô thẻ ⇒ mở lượt trả lời cho chính người này; không phải ⇒ đóng
+   * lượt và chuyển lượt.
+   */
+  private MoveResult moveForward(Player player, Room room, int steps, boolean inRoom) {
+    int from = player.getCurrentPosition();
+    int raw = from - steps;
+    int to = Math.floorMod(raw, TurnCoordinator.pathSize());
+    player.setCurrentPosition(to);
+    if (raw < 0) {
+      player.addCompletedLaps(1);
+    }
+    boolean needsAnswer = inRoom && turns.needsAnswerAt(to);
+    if (inRoom) {
+      if (needsAnswer) {
+        room.setPendingAnswer(true);
+        room.beginTurn(
+            player,
+            TurnPhase.WAITING_ANSWER,
+            Instant.now().plusSeconds(rules.answerTimeoutS),
+            false);
+      } else {
+        closeAnswerTurn(room);
+      }
+    }
+    String message =
+        needsAnswer
+            ? "Bạn tiến thêm " + steps + " ô và được rút thẻ mới."
+            : "Bạn tiến thêm " + steps + " ô.";
+    return new MoveResult(from, to, message);
+  }
+
+  /** Cộng Điểm Chiến thắng — server tự tính, KHÔNG nhận số điểm từ client. */
+  private long award(Player player, long points) {
+    if (points <= 0) {
+      return 0;
+    }
+    player.addWinPoints((int) Math.min(points, Integer.MAX_VALUE));
+    return points;
+  }
+
+  private static String normalize(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  /** Kết quả dời quân: vị trí trước, vị trí sau và câu thông báo. */
+  private record MoveResult(int from, int to, String message) {}
 
   /**
    * Kết thúc ván — chỉ chủ phòng, và người thắng do SERVER tự chấm.
