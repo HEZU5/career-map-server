@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import vn.careermap.config.VnpayConfig;
 
 /**
- * Ký đơn thanh toán VNPay bằng HMAC-SHA256, KHÔNG phải SHA512.
+ * Ký đơn thanh toán VNPay bằng HMAC (mặc định HMAC-SHA256).
  *
  * <p>Thuật toán (bất biến, không đổi):
  * <ol>
@@ -20,14 +20,22 @@ import vn.careermap.config.VnpayConfig;
  *   <li>Bỏ tham số giá trị null hoặc rỗng.</li>
  *   <li>Sắp xếp key theo alphabet (TreeMap order).</li>
  *   <li>Nối {@code key=value} bằng {@code &}.</li>
- *   <li>HMAC-SHA256, KHÔNG phải SHA512 với khoá {@code HashSecret}.</li>
- *   <li>Hex lowercase — độ dài đúng 64 ký tự.</li>
+ *   <li>HMAC theo thuật toán trong cấu hình ({@code vnpay.hash-algorithm},
+ *       mặc định {@code HmacSHA256}), KHÔNG phải SHA512 với khoá
+ *       {@code HashSecret}.</li>
+ *   <li>Hex lowercase — độ dài 64 ký tự với SHA256, 128 ký tự với SHA512.</li>
  * </ol>
+ *
+ * <p>Vì sao thuật toán nằm trong cấu hình: tài liệu VNPay hiện hành mô tả API
+ * mới {@code paymentv2/vpcpay.html} dùng <b>HMAC-SHA512</b> (hash 128 hex ký
+ * tự), còn API cũ {@code paymentgateway/paymenturl.htm} dùng SHA256. Nếu
+ * gateway của ta yêu cầu SHA512 thì chỉ cần đổi biến môi trường
+ * {@code VNPAY_HASH_ALGORITHM=SHA512} + {@code VNPAY_BASE_URL=.../paymentv2/vpcpay.html}
+ * — <b>không</b> cần sửa code, không cần build lại.
  */
 @Service
 public class VnpaySignatureService {
 
-  private static final String HMAC_ALGORITHM = "HmacSHA256";
   private static final String SECURE_HASH_KEY = "vnp_SecureHash";
 
   private final VnpayConfig config;
@@ -41,7 +49,8 @@ public class VnpaySignatureService {
    *
    * @param params các tham số {@code vnp_*}; {@code vnp_SecureHash} và giá trị
    *               null/rỗng tự bị bỏ
-   * @return hex HMAC-SHA256, dài đúng 64 ký tự
+   * @return hex HMAC theo {@code vnpay.hash-algorithm} (64 ký tự với SHA256,
+   *         128 ký tự với SHA512)
    */
   public String sign(Map<String, String> params) {
     return hmacHex(canonical(params));
@@ -65,7 +74,7 @@ public class VnpaySignatureService {
 
   /**
    * Query string đã sẵn sàng ghép vào payUrl, gồm {@code &vnp_SecureHash=...}
-   * ở cuối (hex lowercase, dài 64 ký tự).
+   * ở cuối (hex lowercase).
    *
    * <p>Giá trị tham số được URL-encode (URLEncoder UTF-8) để URL hợp lệ;
    * chữ ký vẫn tính trên giá trị thô — đúng chuẩn VNPay.
@@ -95,14 +104,44 @@ public class VnpaySignatureService {
         .collect(Collectors.joining("&"));
   }
 
+  /**
+   * Thuật toán HMAC đang dùng, đã chuẩn hoá về dạng {@code Mac} hiểu được.
+   *
+   * <p>Chấp nhận cả {@code SHA256}/{@code SHA512} (tên ngắn) lẫn
+   * {@code HmacSHA256}/{@code HmacSHA512} (tên đầy đủ) để người vận hành gõ
+   * {@code VNPAY_HASH_ALGORITHM=SHA512} không bị lỗi.
+   */
+  static String normalizeAlgorithm(String raw) {
+    if (raw == null) {
+      return VnpayConfig.DEFAULT_HASH_ALGORITHM;
+    }
+    String value = raw.trim();
+    if (value.isEmpty()) {
+      return VnpayConfig.DEFAULT_HASH_ALGORITHM;
+    }
+    String upper = value.toUpperCase();
+    if (upper.startsWith("HMAC")) {
+      return "Hmac" + upper.substring("HMAC".length());
+    }
+    if ("SHA256".equals(upper)) {
+      return "HmacSHA256";
+    }
+    if ("SHA512".equals(upper)) {
+      return "HmacSHA512";
+    }
+    // Không nhận ra -> trả nguyên để Mac.getInstance() ném lỗi rõ ràng.
+    return value;
+  }
+
   private String hmacHex(String data) {
+    String algorithm = normalizeAlgorithm(config.getHashAlgorithm());
     try {
-      Mac mac = Mac.getInstance(HMAC_ALGORITHM);
+      Mac mac = Mac.getInstance(algorithm);
       mac.init(new SecretKeySpec(
-          config.getHashSecret().getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM));
+          config.getHashSecret().getBytes(StandardCharsets.UTF_8), algorithm));
       return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
     } catch (Exception e) {
-      throw new IllegalStateException("Không khởi tạo được " + HMAC_ALGORITHM, e);
+      throw new IllegalStateException("Không khởi tạo được " + algorithm, e);
     }
   }
 }

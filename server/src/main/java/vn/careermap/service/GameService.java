@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -279,10 +280,21 @@ public class GameService {
    * để hai đường không thể trả lời khác nhau: đổi {@code game.win-min-*} thì cả
    * hai cùng đổi. Trước đây hàm này hardcode {@code 1} vòng / {@code 12} câu
    * trong khi {@code finish()} đọc ngưỡng cấu hình.
+   *
+   * <p>KHÔNG tạo dòng {@code players} cho key lạ: endpoint này công khai, ai
+   * cũng gọi được với bất kỳ chuỗi nào. Trước đây {@code resolvePlayer} tạo
+   * Player mới ⇒ bảng {@code players} phình vô hạn (Player không ở phòng nào
+   * thì không janitor nào dọn). Nay key không tồn tại ⇒ trả
+   * {@code eligibleToFinish = false}.
    */
   @Transactional(readOnly = true)
   public WinnerResponse checkWinner(WinnerRequest request) {
-    Player player = resolvePlayer(request.playerId());
+    String key = request.playerId() == null ? "" : request.playerId().trim();
+    Optional<Player> found = key.isEmpty() ? Optional.empty() : playerRepository.findByPlayerKey(key);
+    if (found.isEmpty()) {
+      return new WinnerResponse(false, 0, 0);
+    }
+    Player player = found.get();
     return new WinnerResponse(
         isEligibleToWin(player), player.getTotalAnswered(), player.getCurrentPosition());
   }

@@ -155,26 +155,30 @@ public class Room {
   private boolean lastRollAuto;
 
   /**
-   * Ảnh chụp điểm RIASEC của CẢ BÀN tại lúc ván kết thúc, dạng mã nhóm → tổng
-   * điểm ({@code "R" -> 12, "I" -> 0, ...}).
+   * Ảnh chụp điểm RIASEC của TỪNG NGƯỜI CHƠI tại lúc ván kết thúc, dạng
+   * {@code playerKey -> JSON 6 điểm} ({@code "host-H12345" -> "{"R":4,...}"}).
    *
    * <p>Vì sao phải chụp: điểm gốc nằm ở bảng {@code scores} chung với người
    * chơi, mà {@code RoomJanitor} xoá phòng đã xong sau {@code
    * finishedRoomTtlMin} — xoá {@code Room} kéo theo cascade xoá {@code Player}
-   * và {@code Score}. Báo cáo Holland (bán 50.000đ) được sinh ra ở thời điểm tạo
-   * đơn thanh toán, tức SAU thời điểm dọn phòng, nên đọc bảng {@code scores}
-   * lúc đó chỉ ra số 0. Ảnh chụp nằm ở bảng riêng gắn với phòng nên sống lâu
-   * hơn dữ liệu gốc và đọc được bất cứ lúc nào phòng còn tồn tại.
+   * và {@code Score}. Đơn thanh toán (50.000đ) được tạo ở thời điểm tạo đơn
+   * thanh toán, nên đọc bảng {@code scores} lúc đó chỉ ra số 0.
+   *
+   * <p>Vì sao THEO TỪNG NGƯỜI: báo cáo Holland là của riêng người mua. Trước đây
+   * ảnh chụp cộng dồn điểm của CẢ BÀN nên mã Holland của một người lại bị tính
+   * từ điểm của người khác — sai hoàn toàn về mặt nghiệp vụ. Nay mỗi người
+   * chơi có một dòng riêng, {@code PaymentService.createOrder} đọc đúng dòng
+   * của người mua.
    *
    * <p>Rỗng khi ván chưa kết thúc — xem {@link #captureRiasecSnapshot()}.
    */
   @ElementCollection(fetch = FetchType.EAGER)
   @CollectionTable(
-      name = "room_riasec_snapshot",
+      name = "room_player_riasec_snapshot",
       joinColumns = @JoinColumn(name = "room_id"))
-  @MapKeyColumn(name = "riasec_code", length = 1)
-  @Column(name = "points", nullable = false)
-  private Map<String, Integer> riasecSnapshot = new LinkedHashMap<>();
+  @MapKeyColumn(name = "player_key", length = 64)
+  @Column(name = "riasec_json", nullable = false, columnDefinition = "text")
+  private Map<String, String> riasecSnapshot = new LinkedHashMap<>();
 
   @jakarta.persistence.PrePersist
   @jakarta.persistence.PreUpdate
@@ -317,45 +321,61 @@ public class Room {
   }
 
   /**
-   * Chụp lại điểm RIASEC của toàn bộ người chơi vào chính phòng này.
+   * Chụp lại điểm RIASEC của TỪNG người chơi vào chính phòng này.
    *
    * <p>Gọi MỘT lần lúc kết thúc ván ({@code GameService.finish}), sau khi đã
    * chốt người thắng và trước khi broadcast — xem lý do ở {@link
    * #riasecSnapshot}.
    *
-   * <p>Quy tắc cộng dồn:
+   * <p>Quy tắc:
    *
    * <ul>
-   *   <li>Cộng điểm của MỌI người chơi trong phòng (kể cả người đã bấm rời giữa
-   *       ván — họ vẫn trả lời được câu nên vẫn là dữ liệu thật của bàn).
-   *   <li>Luôn có đủ 6 khoá R/I/A/S/E/C, nhóm chưa ai bị hỏi thì để 0 — bên đọc
-   *       ({@code snapshot.get("R")}) không phải đoán có thiếu khoá hay không.
+   *   <li>Mỗi người chơi có MỘT dòng riêng, khoá là {@code playerKey}.
+   *   <li>Điểm của một người là điểm RIẼNG của người đó (không cộng dồn cả
+   *       bàn) — báo cáo Holland phải là của người mua.
+   *   <li>Người đã bấm rời giữa ván vẫn được chụp (họ vẫn trả lời được câu).
    *   <li>Ghi đè ảnh cũ chứ không cộng tiếp vào ảnh cũ, nên gọi lại nhiều lần
    *       vẫn cho cùng một kết quả.
    * </ul>
+   *
+   * @return map {@code playerKey -> JSON 6 điểm}
    */
-  public Map<String, Integer> captureRiasecSnapshot() {
-    Map<String, Integer> snapshot = new LinkedHashMap<>();
-    for (RiasecCategory category : RiasecCategory.values()) {
-      snapshot.put(category.name(), 0);
-    }
+  public Map<String, String> captureRiasecSnapshot() {
+    Map<String, String> snapshot = new LinkedHashMap<>();
     for (Player player : players) {
-      for (Score score : player.getScores()) {
-        if (score.getCategory() == null) continue;
-        // merge chứ không put: nhiều người cùng nhóm thì phải CỘNG, không đè.
-        snapshot.merge(score.getCategory().name(), score.getPoints(), Integer::sum);
+      String json = RiasecScores.toJson(player.getScores());
+      if (json != null) {
+        snapshot.put(player.getPlayerKey(), json);
       }
     }
     this.riasecSnapshot = snapshot;
     return snapshot;
   }
 
-  /** Ảnh chụp điểm RIASEC lúc kết thúc ván; rỗng nếu ván chưa kết thúc. */
-  public Map<String, Integer> getRiasecSnapshot() {
+  /**
+   * Ảnh chụp điểm RIASEC lúc kết thúc ván, theo từng người chơi.
+   *
+   * @return map {@code playerKey -> JSON 6 điểm}; rỗng nếu ván chưa kết thúc
+   */
+  public Map<String, String> getRiasecSnapshot() {
     return riasecSnapshot;
   }
 
-  public void setRiasecSnapshot(Map<String, Integer> riasecSnapshot) {
+  /**
+   * Ảnh chụp RIASEC riêng của MỘT người chơi.
+   *
+   * @param playerKey khoá người chơi
+   * @return JSON 6 điểm, hoặc {@code null} nếu người đó chưa có ảnh chụp (ván
+   *         chưa kết thúc / phòng đã bị dọn)
+   */
+  public String getRiasecSnapshotOf(String playerKey) {
+    if (playerKey == null) {
+      return null;
+    }
+    return riasecSnapshot.get(playerKey);
+  }
+
+  public void setRiasecSnapshot(Map<String, String> riasecSnapshot) {
     this.riasecSnapshot =
         riasecSnapshot == null ? new LinkedHashMap<>() : new LinkedHashMap<>(riasecSnapshot);
   }

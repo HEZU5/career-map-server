@@ -14,7 +14,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
@@ -24,14 +23,16 @@ import vn.careermap.config.VnpayConfig;
 import vn.careermap.domain.PaymentOrder;
 import vn.careermap.domain.PaymentStatus;
 import vn.careermap.domain.Player;
+import vn.careermap.domain.RiasecCategory;
 import vn.careermap.domain.Room;
+import vn.careermap.domain.RoomStatus;
 import vn.careermap.repo.PaymentOrderRepository;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.CreatePaymentResponse;
 import vn.careermap.web.dto.WinnerResponse;
 
 /**
- * Tạo đơn VNPay: kiểm tra điều kiện thắng, tái dùng đơn PENDING còn hạn, ký
+ * Tạo đơn VNPay: kiểm tra điều kiện thắng, tái sử dụng đơn PENDING còn hạn, ký
  * chữ ký HMAC-SHA256 thật bằng {@link VnpaySignatureService} (không mock).
  *
  * <p>Không Spring context, không DB: chỉ mock repository và
@@ -53,6 +54,10 @@ class PaymentServiceTest {
   private final PaymentService service =
       new PaymentService(RULES, playerRepository, orderRepository, gameService, signatureService, VNPAY);
 
+  /**
+   * Người chơi đã chơi xong ván: phòng ĐÃ KẾT THÚC và đã có ảnh chụp RIASEC
+   * riêng (đúng trạng thái thật lúc người chơi bấm "Nhận báo cáo").
+   */
   private static Player player(String key, int laps, int answered) {
     Player p = Player.create(key, "Nguoi Choi");
     Room room = Room.create("R12345", "Chu Phong", false, "owner");
@@ -61,6 +66,10 @@ class PaymentServiceTest {
     for (int i = 0; i < answered; i++) {
       p.incrementTotalAnswered();
     }
+    p.scoreOf(RiasecCategory.R).addPoints(4);
+    p.scoreOf(RiasecCategory.S).addPoints(6);
+    room.setStatus(RoomStatus.FINISHED);
+    room.captureRiasecSnapshot();
     return p;
   }
 
@@ -134,6 +143,114 @@ class PaymentServiceTest {
 
     verify(gameService, never()).checkWinner(any());
     verify(orderRepository, never()).save(any());
+  }
+
+  // ── Ván chưa kết thúc / phòng đã bị dọn ──────────────────────────────────
+
+  /**
+   * Ván CHƯA kết thúc thì không bán: điểm lúc đó còn dở dang, mua xong báo cáo
+   * sai mà tiền cũng mất.
+   */
+  @Test
+  void vanChuaKetThucThiKhongTaoDuocDon() {
+    Player p = player("busy", 1, 12);
+    p.getRoom().setStatus(RoomStatus.PLAYING);
+    when(playerRepository.findByPlayerKey("busy")).thenReturn(Optional.of(p));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+
+    assertThatThrownBy(() -> service.createOrder("busy"))
+        .satisfies(thrown -> {
+          PaymentServiceTest.assertForbidden(thrown);
+          assertThat(((ResponseStatusException) thrown).getReason()).contains("Ván chưa kết thúc");
+        });
+
+    verify(orderRepository, never()).save(any());
+  }
+
+  /**
+   * Phòng đã bị {@code RoomJanitor} dọn ⇒ cascade xoá {@code Player} ⇒ cả dòng
+   * người chơi biến mất ⇒ KHÔNG tạo được đơn (không phải 500, không phải đơn
+   * rác PENDING).
+   */
+  @Test
+  void phongDaBiDonThiKhongTaoDuocDon() {
+    // Mô phỏng đúng thứ tự cascade: xoá phòng -> xoá Player -> xoá Score.
+    Player p = player("orphan", 1, 12);
+    Room room = p.getRoom();
+    room.getPlayers().remove(p);
+    room.setRiasecSnapshot(new java.util.LinkedHashMap<>());
+    // Dòng người chơi đã bị xoá theo => repository không còn trả về.
+    when(playerRepository.findByPlayerKey("orphan")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.createOrder("orphan"))
+        .satisfies(thrown -> {
+          PaymentServiceTest.assertForbidden(thrown);
+          assertThat(((ResponseStatusException) thrown).getReason()).contains("Không tìm thấy");
+        });
+
+    verify(orderRepository, never()).save(any());
+  }
+
+  /** Người chơi còn tồn tại nhưng đã không ở phòng nào nữa → 403 rõ ràng. */
+  @Test
+  void nguoiChoiKhongConPhongThiKhongTaoDuocDon() {
+    Player orphan = Player.create("noroom", "Khach");
+    when(playerRepository.findByPlayerKey("noroom")).thenReturn(Optional.of(orphan));
+
+    assertThatThrownBy(() -> service.createOrder("noroom"))
+        .satisfies(thrown -> {
+          PaymentServiceTest.assertForbidden(thrown);
+          assertThat(((ResponseStatusException) thrown).getReason())
+              .contains("không còn ở phòng nào");
+        });
+
+    verify(orderRepository, never()).save(any());
+  }
+
+  /**
+   * Ván đã kết thúc nhưng ảnh chụp RIASEC không còn (phòng bị dọn sạch) ⇒
+   * KHÔNG được im lặng tạo báo cáo RỘNG — phải trả 403 rõ ràng.
+   */
+  @Test
+  void khongCoAnhChupThiKhongTaoDuocDon() {
+    Player p = player("nosnap", 1, 12);
+    p.getRoom().setRiasecSnapshot(new java.util.LinkedHashMap<>());
+    when(playerRepository.findByPlayerKey("nosnap")).thenReturn(Optional.of(p));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+
+    assertThatThrownBy(() -> service.createOrder("nosnap"))
+        .satisfies(thrown -> {
+          PaymentServiceTest.assertForbidden(thrown);
+          assertThat(((ResponseStatusException) thrown).getReason()).contains("không còn");
+        });
+
+    verify(orderRepository, never()).save(any());
+  }
+
+  /** Báo cáo phải lấy điểm RIASEC của CHÍNH người mua, không phải tổng cả phòng. */
+  @Test
+  void anhChupLayDungDiemCuaNguoiMua() {
+    Player buyer = player("buyer", 1, 12);
+    Player other = Player.create("other", "Khac");
+    buyer.getRoom().addPlayer(other);
+    other.scoreOf(RiasecCategory.A).addPoints(99);
+    buyer.getRoom().captureRiasecSnapshot();
+
+    when(playerRepository.findByPlayerKey("buyer")).thenReturn(Optional.of(buyer));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "buyer", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.createOrder("buyer");
+
+    ArgumentCaptor<PaymentOrder> saved = ArgumentCaptor.forClass(PaymentOrder.class);
+    verify(orderRepository).save(saved.capture());
+    String riasec = saved.getValue().getRiasecJson();
+    assertThat(riasec).contains("\"R\":4").contains("\"S\":6");
+    assertThat(riasec).doesNotContain("\"A\":99");
+    assertThat(PaymentService.hollandCode(riasec)).isEqualTo("S");
   }
 
   @Test
@@ -365,5 +482,147 @@ class PaymentServiceTest {
     assertThat(hash).isNotNull();
     assertThat(hash).hasSize(64);
     assertThat(signatureService.sign(params)).isEqualTo(hash);
+  }
+
+  // ── Tham số VNPay đúng chuẩn (rủi ro protocol thật) ────────────────────────
+
+  /**
+   * {@code vnp_TxnExpireDate} KHÔNG phải param chuẩn của API cũ
+   * {@code paymentgateway/paymenturl.htm}. Gateway có thể loại bỏ param lạ
+   * trước khi tự tính hash ⇒ hash của ta ≠ hash của VNPay ⇒ đơn bị từ chối.
+   */
+  @Test
+  void payUrlKhongCoParamLaTxnExpireDate() {
+    when(playerRepository.findByPlayerKey("params"))
+        .thenReturn(Optional.of(player("params", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "params", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("params");
+
+    assertThat(response.payUrl()).doesNotContain("vnp_TxnExpireDate");
+    assertThat(response.payUrl()).contains("vnp_ExpireDate=");
+  }
+
+  /** {@code vnp_OrderInfo} bắt buộc với {@code pay_web}; {@code vnp_IpAddr} lấy từ IP client. */
+  @Test
+  void payUrlCoOrderInfoVaIpAddr() {
+    when(playerRepository.findByPlayerKey("ip"))
+        .thenReturn(Optional.of(player("ip", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "ip", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("ip", "203.0.113.7");
+
+    assertThat(response.payUrl()).contains("vnp_OrderInfo=");
+    assertThat(response.payUrl()).contains("vnp_IpAddr=203.0.113.7");
+  }
+
+  /** Không có IP client thì KHÔNG gửi {@code vnp_IpAddr} (giá trị rỗng bị lọc khỏi chữ ký). */
+  @Test
+  void payUrlKhongCoIpAddrKhiKhongBietIp() {
+    when(playerRepository.findByPlayerKey("noip"))
+        .thenReturn(Optional.of(player("noip", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "noip", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("noip", "");
+
+    assertThat(response.payUrl()).doesNotContain("vnp_IpAddr");
+  }
+
+  /** Gateway VNPay đổi được bằng biến môi trường, KHÔNG cần sửa code. */
+  @Test
+  void payUrlDungBaseUrlTuCauHinh() {
+    VnpayConfig v2 = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html", "SHA512", "SHA512");
+    PaymentService v2Service = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(v2),
+        v2);
+    when(playerRepository.findByPlayerKey("v2"))
+        .thenReturn(Optional.of(player("v2", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "v2", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = v2Service.createOrder("v2");
+
+    assertThat(response.payUrl())
+        .startsWith("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?");
+    assertThat(response.payUrl()).contains("vnp_SecureHashType=SHA512");
+    // SHA512 -> hash 128 hex ky tu.
+    Map<String, String> params = parseQuery(response.payUrl());
+    String hash = params.remove("vnp_SecureHash");
+    assertThat(hash).hasSize(128);
+  }
+
+  /**
+   * Race 2 tab: hai lần gọi {@code createOrder} CÙNG LÚC phải chỉ tạo MỘT
+   * đơn PENDING.
+   *
+   * <p>Nếu không khoá theo {@code playerKey} thì cả hai cùng đọc "chưa có đơn
+   * PENDING" rồi cùng tạo ⇒ 2 đơn ⇒ client chỉ nhớ 1 {@code pendingOrderId}
+   * ⇒ poll nhầm đơn ⇒ đếm ngược rồi báo "hết hạn" trong khi đơn thật đã PAID,
+   * và người chơi có thể phải trả tiền hai lần.
+   */
+  @Test
+  void haiTabBamCungLucChiTaoMotDonPending() throws Exception {
+    when(playerRepository.findByPlayerKey("race"))
+        .thenReturn(Optional.of(player("race", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+
+    java.util.concurrent.atomic.AtomicReference<PaymentOrder> saved =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "race", PaymentStatus.PENDING))
+        .thenAnswer(
+            invocation -> {
+              // Nới rộng cửa sổ: hai thread cùng nằm trong "vùng quyết định"
+              // nếu KHÔNG có khoá. Có khoá thì thread thứ hai phải chờ.
+              Thread.sleep(60);
+              return Optional.ofNullable(saved.get());
+            });
+    when(orderRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              PaymentOrder order = invocation.getArgument(0);
+              saved.compareAndSet(null, order);
+              return order;
+            });
+
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      var first = pool.submit(() -> service.createOrder("race").orderId());
+      var second = pool.submit(() -> service.createOrder("race").orderId());
+      String id1 = first.get();
+      String id2 = second.get();
+
+      assertThat(id1).isEqualTo(id2);
+    } finally {
+      pool.shutdownNow();
+    }
+
+    // Đúng MỘT lần ghi đơn — không phải hai.
+    verify(orderRepository, org.mockito.Mockito.times(1)).save(any());
   }
 }

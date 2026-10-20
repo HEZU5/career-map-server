@@ -33,8 +33,16 @@ public class PaymentOrder {
   @Column(nullable = false, length = 64)
   private String playerKey;
 
-  /** Mã phòng lúc tạo đơn — chỉ để hiển thị/đối soát. */
-  @Column(name = "room_code", nullable = false, length = 8)
+  /**
+   * Mã phòng lúc tạo đơn — chỉ để hiển thị/đối soát.
+   *
+   * <p>CHO PHÉP null: đơn được tạo khi ván đã kết thúc, nhưng phòng có thể đã
+   * bị {@code RoomJanitor} dọn (xoá cascade Player) — lúc đó không còn mã phòng
+   * để ghi. Cột {@code nullable=false} sẽ ném
+   * {@code DataIntegrityViolationException} ⇒ HTTP 500 cho người chơi, thay vì
+   * câu tiếng Việt "Ván đã kết thúc quá lâu".
+   */
+  @Column(name = "room_code", length = 8)
   private String roomCode;
 
   /** Số tiền (VND) — do server đặt, không nhận từ client. */

@@ -338,13 +338,16 @@ class GameFinishTest {
 
     service.finish(new FinishRequest("owner"));
 
-    // Cộng dồn của MỌI người chơi: I = 5 + 2 = 7, không phải của riêng owner.
-    assertThat(room.getRiasecSnapshot())
-        .containsEntry("R", 3)
-        .containsEntry("I", 7)
-        .containsEntry("C", 7)
-        .containsEntry("A", 0);
-    assertThat(room.getRiasecSnapshot()).hasSize(RiasecCategory.values().length);
+    // MỖI người một dòng riêng: điểm của owner KHÔNG lẫn điểm của guest-1.
+    assertThat(room.getRiasecSnapshot()).containsOnlyKeys("owner", "guest-1");
+    assertThat(room.getRiasecSnapshotOf("owner"))
+        .contains("\"R\":3")
+        .contains("\"I\":5")
+        .contains("\"C\":0");
+    assertThat(room.getRiasecSnapshotOf("guest-1"))
+        .contains("\"I\":2")
+        .contains("\"C\":7")
+        .contains("\"R\":0");
   }
 
   @Test
@@ -362,7 +365,7 @@ class GameFinishTest {
     room.getPlayers().clear();
 
     assertThat(room.isFinished()).isTrue();
-    assertThat(room.getRiasecSnapshot()).containsEntry("R", 4).containsEntry("S", 6);
+    assertThat(room.getRiasecSnapshotOf("owner")).contains("\"R\":4").contains("\"S\":6");
   }
 
   @Test
@@ -373,7 +376,7 @@ class GameFinishTest {
     service.finish(new FinishRequest("owner"));
     service.finish(new FinishRequest("owner")); // retry mạng / bấm 2 nút
 
-    assertThat(room.getRiasecSnapshot()).containsEntry("R", 5);
+    assertThat(room.getRiasecSnapshotOf("owner")).contains("\"R\":5");
   }
 
   @Test

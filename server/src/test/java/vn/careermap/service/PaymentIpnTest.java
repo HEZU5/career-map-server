@@ -1,6 +1,7 @@
 package vn.careermap.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -12,10 +13,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import vn.careermap.config.GameRulesConfig;
 import vn.careermap.config.VnpayConfig;
 import vn.careermap.domain.PaymentOrder;
 import vn.careermap.domain.PaymentStatus;
+import vn.careermap.exception.PaymentInfrastructureException;
 import vn.careermap.repo.PaymentOrderRepository;
 
 class PaymentIpnTest {
@@ -125,5 +128,20 @@ class PaymentIpnTest {
     assertThat(result).isEqualTo("{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
     verify(orderRepository, never()).save(any());
+  }
+
+  /**
+   * Lỗi HẠ TẦNG (DB lạnh, connection reset) KHÔNG được nuốt thành HTTP 200.
+   *
+   * <p>Trả 200 ở đây = VNPay KHÔNG retry ⇒ đơn kẹt PENDING ⇒ hết 15 phút thành
+   * EXPIRED dù tiền ĐÃ vào. Vì vậy exception phải ném ra ⇒ HTTP 5xx ⇒ retry.
+   */
+  @Test
+  void loiHaTauPhaiNemRaDeVnPayRetry() {
+    when(orderRepository.findById("order6"))
+        .thenThrow(new DataAccessResourceFailureException("Neon lạnh - connection reset"));
+
+    assertThatThrownBy(() -> service.handleIpn(signedParams("order6", "01")))
+        .isInstanceOf(PaymentInfrastructureException.class);
   }
 }

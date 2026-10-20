@@ -20,6 +20,8 @@ import vn.careermap.config.VnpayConfig;
 import vn.careermap.domain.PaymentOrder;
 import vn.careermap.domain.PaymentStatus;
 import vn.careermap.domain.Player;
+import vn.careermap.domain.Room;
+import vn.careermap.exception.PaymentInfrastructureException;
 import vn.careermap.repo.PaymentOrderRepository;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.CreatePaymentResponse;
@@ -47,11 +49,33 @@ public class PaymentService {
 
   private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
-  private static final String SANDBOX_PAY_URL =
-      "https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm";
   private static final DateTimeFormatter VNPAY_DATE_TIME =
       DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.of("Asia/Ho_Chi_Minh"));
   private static final String VNP_COMMAND = "pay_web";
+
+  /** Mô tả đơn gửi kèm cho VNPay ({@code vnp_OrderInfo}); tối đa 50 ký tự. */
+  private static final String VNP_ORDER_INFO = "Báo cáo Holland";
+
+  /**
+   * Khoá tạo đơn theo {@code playerKey} — dải khoá (striped lock).
+   *
+   * <p>Vì sao: hai tab (hoặc hai lần bấm nhanh) cùng gọi {@code createOrder}
+   * sẽ cùng đọc "chưa có đơn PENDING" rồi cùng tạo ⇒ HAI đơn PENDING cho
+   * cùng một người. Client chỉ nhớ được một {@code pendingOrderId} nên sẽ poll
+   * nhầm đơn (đơn thật đã PAID nhưng app đếm ngược đơn còn PENDING rồi báo
+   * "hết hạn"), và người chơi có thể phải trả tiền HAI lần.
+   *
+   * <p>Dải khoá cố định ({@link #LOCK_STRIPES}) thay vì map theo {@code playerKey}
+   * để bộ nhớ không phình theo số người chơi từng truy cập. Hai người khác
+   * nhau có thể chung một khoá — chỉ là chậm hơn một chút, không sao.
+   *
+   * <p>Khoá ở tầng JVM: đủ cho quy mô hiện tại (một instance). Khi scale ra
+   * nhiều instance thì cần thêm ràng buộc UNIQUE ở DB — nằm ngoài phạm vi
+   * lần này (không có migration trong dự án).
+   */
+  private static final int LOCK_STRIPES = 64;
+
+  private final Object[] orderLocks = new Object[LOCK_STRIPES];
 
   private final GameRulesConfig rules;
   private final PlayerRepository playerRepository;
@@ -73,6 +97,9 @@ public class PaymentService {
     this.gameService = gameService;
     this.signatureService = signatureService;
     this.vnpayConfig = vnpayConfig;
+    for (int i = 0; i < LOCK_STRIPES; i++) {
+      orderLocks[i] = new Object();
+    }
   }
 
   /**
@@ -84,10 +111,26 @@ public class PaymentService {
    *                                  cấu hình chưa đủ (thiếu mã merchant /
    *                                  khoá bí mật / URL trả về / URL IPN),
    *                                  403 nếu người chơi không
-   *                                  tồn tại hoặc chưa đủ điều kiện thắng
+   *                                  tồn tại, ván chưa kết thúc, đã kết thúc quá
+   *                                  lâu (phòng đã bị dọn) hoặc chưa đủ điều
+   *                                  kiện thắng
    */
   @Transactional
   public CreatePaymentResponse createOrder(String playerKey) {
+    return createOrder(playerKey, "");
+  }
+
+  /**
+   * Tạo hoặc tái sử dụng đơn thanh toán VNPay — kèm IP người mua để điền
+   * {@code vnp_IpAddr}.
+   *
+   * @param playerKey khoá người chơi (không phải ID số)
+   * @param clientIp  IP người mua (lấy từ header {@code X-Forwarded-For}); rỗng
+   *                  thì không gửi {@code vnp_IpAddr} (chuẩn VNPay cũng vậy)
+   * @return thông tin đơn + URL thanh toán
+   */
+  @Transactional
+  public CreatePaymentResponse createOrder(String playerKey, String clientIp) {
     // Thanh toán đang tắt -> KHÔNG tạo đơn rác (payUrl rỗng/không ký được).
     // Client đã ẩn nút mua khi vnpay.enabled=false, nhưng client cũ hoặc
     // gọi API trực tiếp vẫn tới được đây — chặn ở server là lớp chắn cuối.
@@ -117,36 +160,64 @@ public class PaymentService {
         .orElseThrow(() -> new ResponseStatusException(
             HttpStatus.FORBIDDEN, "Không tìm thấy người chơi '" + playerKey + "'"));
 
+    // Ván CHƯA kết thúc thì không bán: điểm lúc đó còn đang dở dang, mua xong
+    // báo cáo lại sai (và tiền cũng mất).
+    Room room = player.getRoom();
+    if (room == null) {
+      throw new ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Bạn không còn ở phòng nào — ván đã kết thúc quá lâu.");
+    }
+    if (!room.isFinished()) {
+      throw new ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Ván chưa kết thúc — hãy chờ ván kết thúc rồi mở báo cáo.");
+    }
+
     WinnerResponse winner = gameService.checkWinner(new WinnerRequest(playerKey));
     if (!winner.eligibleToFinish()) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Chưa đủ điều kiện mở báo cáo Holland");
     }
 
-    Instant now = Instant.now();
-    Optional<PaymentOrder> existing = orderRepository
-        .findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(playerKey, PaymentStatus.PENDING);
-    if (existing.isPresent() && !existing.get().isExpiredAt(now)) {
-      return toResponse(existing.get());
+    // Diem RIASEC lay tu ANH CHUP theo TUNG NGUOI CHOI, chup luc ket thuc van.
+    // Phong bi don sau 30 phut => khong con anh chup => bao cao se rong.
+    // Tra loi 403 ro rang thay vi im lang tao bao cao rong (nguoi cho da tra tien).
+    String riasecJson = room.getRiasecSnapshotOf(playerKey);
+    if (riasecJson == null || riasecJson.isBlank()) {
+      throw new ResponseStatusException(
+          HttpStatus.FORBIDDEN,
+          "Ván đã kết thúc quá lâu — dữ liệu báo cáo không còn. Hãy chơi ván mới nhé.");
     }
 
-    PaymentOrder order = PaymentOrder.create(
-        UUID.randomUUID().toString().replace("-", ""),
-        playerKey,
-        player.getRoom() == null ? null : player.getRoom().getCode(),
-        rules.getPaymentAmountVnd(),
-        rules.getPaymentTtlMinutes());
-    // Chup diem RIASEC cua CHINH nguoi mua (khong phai tong cua ca phong), de bao
-    // cao Holland la cua rieng ho.
-    String riasecJson = toJson(player.getScores());
-    if (riasecJson != null && !riasecJson.isEmpty()) {
+    // Khoá theo playerKey: hai tab bấm "Nhan bao cao" cung luc thi chi tao
+    // MOT don PENDING (client chi nho duoc mot pendingOrderId).
+    synchronized (lockFor(playerKey)) {
+      Instant now = Instant.now();
+      Optional<PaymentOrder> existing = orderRepository
+          .findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(playerKey, PaymentStatus.PENDING);
+      if (existing.isPresent() && !existing.get().isExpiredAt(now)) {
+        return toResponse(existing.get(), clientIp);
+      }
+
+      PaymentOrder order = PaymentOrder.create(
+          UUID.randomUUID().toString().replace("-", ""),
+          playerKey,
+          room.getCode(),
+          rules.getPaymentAmountVnd(),
+          rules.getPaymentTtlMinutes());
       order.setRiasecJson(riasecJson);
+      orderRepository.save(order);
+      return toResponse(order, clientIp);
     }
-    orderRepository.save(order);
-    return toResponse(order);
   }
 
-  private CreatePaymentResponse toResponse(PaymentOrder order) {
+  /** Khoá tạo đơn của một người chơi (dải khoá theo hash của `playerKey`). */
+  private Object lockFor(String playerKey) {
+    int hash = playerKey == null ? 0 : playerKey.hashCode();
+    int index = Math.floorMod(hash, LOCK_STRIPES);
+    return orderLocks[index];
+  }
+
+  private CreatePaymentResponse toResponse(PaymentOrder order, String clientIp) {
     String createDate = VNPAY_DATE_TIME.format(order.getCreatedAt());
     String expireDate = VNPAY_DATE_TIME.format(order.getExpiresAt());
 
@@ -161,19 +232,41 @@ public class PaymentService {
     params.put("vnp_Locale", "vn");
     params.put("vnp_ReturnUrl", vnpayConfig.getReturnUrl());
     params.put("vnp_IpnUrl", vnpayConfig.getIpnUrl());
-    params.put("vnp_TxnExpireDate", expireDate);
+    // vnp_OrderInfo: BAT BUOC voi lenh pay_web.
+    params.put("vnp_OrderInfo", VNP_ORDER_INFO);
+    // vnp_IpAddr: IP nguoi mua. Khong co header X-Forwarded-For thi BO QUA
+    // (gia tri rong se bi loc khoi chu ky nhu chuan VNPay).
+    if (clientIp != null && !clientIp.isBlank()) {
+      params.put("vnp_IpAddr", clientIp.trim());
+    }
+    // vnp_SecureHashType: chi gui khi duoc cau hinh. Khong gui thi gateway
+    // co the tu mac dinh SHA512 => hash lech => gateway tu choi don.
+    String hashType = vnpayConfig.getHashType();
+    if (hashType != null && !hashType.isBlank()) {
+      params.put("vnp_SecureHashType", hashType.trim());
+    }
+    // KHONG gui vnp_TxnExpireDate: KHONG phai param chuan cua API cu
+    // paymentgateway/paymenturl.htm. Gateway co the loai param la truoc khi
+    // tu tinh hash => hash cua ta != hash cua VNPay => bi tu choi.
 
-    String payUrl = SANDBOX_PAY_URL + "?" + signatureService.signedQueryString(params);
+    String payUrl = vnpayConfig.getBaseUrl() + "?" + signatureService.signedQueryString(params);
     return new CreatePaymentResponse(order.getId(), payUrl, order.getExpiresAt());
   }
 
   /**
    * Xử lý IPN server-to-server từ VNPay.
    *
-   * <p>Toàn bộ thân hàm được bọc try/catch để **không bao giờ** ném exception ra
-   * ngoài — {@code ConflictAdvice} là {@code @RestControllerAdvice}, nếu exception
-   * thoát ra ngoài sẽ bị trả 5xx và VNPay retry mãi. Luôn trả HTTP 200 với body
-   * JSON {@code {"RspCode":...,"Message":...}} theo chuẩn VNPay.
+   * <p>Quy tắc (ruling mới, đảo ngược ràng buộc cũ "luôn trả HTTP 200"):
+   *
+   * <ul>
+   *   <li>Lỗi NGHIỆP VỤ (chữ ký sai, đơn không tồn tại, status khác
+   *       {@code "01"}, đã PAID, sai số tiền) → HTTP <b>200</b> kèm
+   *       {@code RspCode} tương ứng. Không retry cũng được vì đơn này không
+   *       bao giờ thành PAID.</li>
+   *   <li>Lỗi HẠ TẦNG (DB lạnh, connection reset, pool hết) → để exception
+   *       ném ra ⇒ HTTP <b>5xx</b> ⇒ VNPay retry. Đây là thứ phải retry:
+   *       tiền ĐÃ vào mà đơn kẹt PENDING thì người chơi mất tiền.</li>
+   * </ul>
    *
    * <p>Thứ tự: verify chữ ký → {@code vnp_TransactionStatus == "01"} → tra đơn
    * theo {@code vnp_TxnRef} → nếu đã PAID → kiểm tra số tiền → đánh dấu PAID +
@@ -206,8 +299,11 @@ public class PaymentService {
       orderRepository.save(order);
       return "{\"RspCode\":\"00\",\"Message\":\"Confirm Success\"}";
     } catch (Exception e) {
-      log.warn("IPN xử lý thất bại: {}", e);
-      return "{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}";
+      // Lỗi hạ tầng (DB) hoặc lỗi không lường trước: KHÔNG được trả 200.
+      // Trả 200 ở đây = nuốt lỗi = VNPay không retry = đơn kẹt PENDING =
+      // hết hạn EXPIRED dù tiền đã vào.
+      log.error("IPN xử lý thất bại (lỗi hạ tầng) — trả 5xx để VNPay retry.", e);
+      throw new PaymentInfrastructureException("Lỗi hạ tầng khi xử lý IPN VNPay", e);
     }
   }
 
@@ -242,6 +338,7 @@ public class PaymentService {
         order.getId(),
         order.getStatus().name(),
         order.getAmount(),
+        order.getCreatedAt(),
         order.getExpiresAt(),
         hollandCode(order.getRiasecJson()),
         riasecJson);
@@ -249,6 +346,16 @@ public class PaymentService {
 
   /**
    * Lịch sử thanh toán của người chơi, đơn mới nhất trước, tối đa 100.
+   *
+   * <p>CHỈ trả METADATA — KHÔNG trả {@code riasecJson}.
+   *
+   * <p>Vì sao: {@code playerKey} là chuỗi ĐOÁN ĐƯỢC ({@code host-<mã phòng>})
+   * và mã phòng nằm trong danh sách phòng CÔNG KHAI ({@code GET /api/rooms}).
+   * Trước đây endpoint này trả cả {@code riasecJson} ⇒ bất kỳ ai cũng đọc
+   * được báo cáo Holland của người khác — kể cả đơn CHƯA thanh toán (tức nội
+   * dung đã trả tiền bị lộ miễn phí). Nay endpoint chỉ còn metadata; nội dung
+   * báo cáo chỉ đọc được qua {@code GET /api/payments/{orderId}?playerKey=} —
+   * endpoint này KIỂM TRA CHỦ ĐƠN ({@code findByIdAndPlayerKey}).
    */
   @Transactional
   public List<PaymentHistoryItem> history(String playerKey) {
@@ -262,18 +369,13 @@ public class PaymentService {
         order.markExpired();
         orderRepository.save(order);
       }
-      String riasecJson = order.getRiasecJson();
-      if (riasecJson == null || riasecJson.trim().isEmpty()) {
-        riasecJson = "";
-      }
       result.add(new PaymentHistoryItem(
           order.getId(),
           order.getStatus().name(),
           order.getAmount(),
           order.getCreatedAt(),
           order.getExpiresAt(),
-          hollandCode(order.getRiasecJson()),
-          riasecJson));
+          hollandCode(order.getRiasecJson())));
     }
     return result;
   }
@@ -349,36 +451,5 @@ public class PaymentService {
     }
     // Không tìm thấy key hợp lệ.
     return null;
-  }
-
-  private static String toJson(java.util.List<vn.careermap.domain.Score> scores) {
-    if (scores == null || scores.isEmpty()) {
-      return null;
-    }
-    Map<String, Integer> snapshot = new LinkedHashMap<>();
-    for (vn.careermap.domain.RiasecCategory c : vn.careermap.domain.RiasecCategory.values()) {
-      snapshot.put(c.name(), 0);
-    }
-    for (vn.careermap.domain.Score s : scores) {
-      if (s.getCategory() == null) continue;
-      snapshot.merge(s.getCategory().name(), s.getPoints(), Integer::sum);
-    }
-    return toJson(snapshot);
-  }
-  private static String toJson(java.util.Map<String, Integer> snapshot) {
-    if (snapshot == null || snapshot.isEmpty()) {
-      return null;
-    }
-    StringBuilder sb = new StringBuilder("{");
-    boolean first = true;
-    for (Map.Entry<String, Integer> e : snapshot.entrySet()) {
-      if (!first) {
-        sb.append(",");
-      }
-      first = false;
-      sb.append("\"").append(e.getKey()).append("\":")
-          .append(e.getValue() == null ? 0 : e.getValue());
-    }
-    return sb.append("}").toString();
   }
 }

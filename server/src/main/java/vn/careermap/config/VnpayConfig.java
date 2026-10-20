@@ -23,13 +23,29 @@ public class VnpayConfig {
   public static final String ENV_RETURN_URL = "VNPAY_RETURN_URL";
   public static final String ENV_IPN_URL = "VNPAY_IPN_URL";
 
+  /** URL gateway VNPay — đổi được mà KHÔNG cần build lại (sandbox ⇄ production). */
+  public static final String ENV_BASE_URL = "VNPAY_BASE_URL";
+
+  /** Thuật toán chữ ký — đổi được mà KHÔNG cần build lại. */
+  public static final String ENV_HASH_ALGORITHM = "VNPAY_HASH_ALGORITHM";
+
+  /** Kiểu hash gửi kèm cho gateway qua {@code vnp_SecureHashType}. */
+  public static final String ENV_HASH_TYPE = "VNPAY_HASH_TYPE";
+
+  /** Gateway sandbox mặc định (API cũ {@code pay_web}). */
+  public static final String DEFAULT_BASE_URL =
+      "https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm";
+
+  /** Thuật toán chữ ký mặc định. */
+  public static final String DEFAULT_HASH_ALGORITHM = "HmacSHA256";
+
   /** Bật/tắt thanh toán VNPay; đọc để kiểm tra sẵn sàng, chặn sớm khi chưa cấu hình. */
   private final boolean enabled;
 
   /** Merchant ID (Website ID) cấp bởi VNPay. */
   private final String tmnCode;
 
-  /** Mã bí mật dùng ký HMAC-SHA256 (HashSecret) — đọc từ biến môi trường. */
+  /** Mã bí mật dùng ký HMAC (HashSecret) — đọc từ biến môi trường. */
   private final String hashSecret;
 
   /** URL VNPay redirect về sau khi thanh toán (GET). */
@@ -38,17 +54,50 @@ public class VnpayConfig {
   /** URL IPN (server-to-server) VNPay gọi báo kết quả thật. */
   private final String ipnUrl;
 
+  /** URL gateway VNPay (pay_web). */
+  private final String baseUrl;
+
+  /** Thuật toán HMAC dùng để ký: {@code HmacSHA256} (mặc định) hoặc {@code HmacSHA512}. */
+  private final String hashAlgorithm;
+
+  /** Kiểu hash gửi kèm cho gateway ({@code vnp_SecureHashType}); rỗng = không gửi. */
+  private final String hashType;
+
   public VnpayConfig(
       @Value("${vnpay.enabled:false}") boolean enabled,
       @Value("${vnpay.tmn-code:}") String tmnCode,
       @Value("${vnpay.hash-secret:}") String hashSecret,
       @Value("${vnpay.return-url:}") String returnUrl,
-      @Value("${vnpay.ipn-url:}") String ipnUrl) {
+      @Value("${vnpay.ipn-url:}") String ipnUrl,
+      @Value("${vnpay.base-url:" + DEFAULT_BASE_URL + "}") String baseUrl,
+      @Value("${vnpay.hash-algorithm:" + DEFAULT_HASH_ALGORITHM + "}") String hashAlgorithm,
+      @Value("${vnpay.hash-type:}") String hashType) {
     this.enabled = enabled;
     this.tmnCode = tmnCode;
     this.hashSecret = hashSecret;
     this.returnUrl = returnUrl;
     this.ipnUrl = ipnUrl;
+    this.baseUrl = isBlank(baseUrl) ? DEFAULT_BASE_URL : baseUrl.trim();
+    this.hashAlgorithm =
+        isBlank(hashAlgorithm) ? DEFAULT_HASH_ALGORITHM : hashAlgorithm.trim();
+    this.hashType = hashType == null ? "" : hashType.trim();
+  }
+
+  /**
+   * Ctor rút gọn — dùng 4 giá trị VNPay cơ bản, còn lại lấy mặc định
+   * (gateway sandbox + HMAC-SHA256). Tiện cho test và cho code gọi nhanh.
+   */
+  public VnpayConfig(
+      boolean enabled, String tmnCode, String hashSecret, String returnUrl, String ipnUrl) {
+    this(
+        enabled,
+        tmnCode,
+        hashSecret,
+        returnUrl,
+        ipnUrl,
+        DEFAULT_BASE_URL,
+        DEFAULT_HASH_ALGORITHM,
+        "");
   }
 
   public boolean isEnabled() {
@@ -120,5 +169,23 @@ public class VnpayConfig {
 
   public String getIpnUrl() {
     return ipnUrl;
+  }
+
+  /** URL gateway VNPay dùng để dựng payUrl. */
+  public String getBaseUrl() {
+    return baseUrl;
+  }
+
+  /**
+   * Thuật toán HMAC dùng để ký, đã chuẩn hoá về dạng {@code Mac} hiểu được
+   * ({@code HmacSHA256} / {@code HmacSHA512}).
+   */
+  public String getHashAlgorithm() {
+    return hashAlgorithm;
+  }
+
+  /** Kiểu hash gửi kèm cho gateway qua {@code vnp_SecureHashType}; rỗng = không gửi. */
+  public String getHashType() {
+    return hashType;
   }
 }
