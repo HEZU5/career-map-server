@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,7 +28,7 @@ import vn.careermap.web.dto.PaymentStatusResponse;
  * trả payUrl sandbox + expiresAt.
  * <p>GET /api/payments/history?playerKey=: CHỈ metadata (không có nội dung báo
  * cáo) — xem {@link PaymentHistoryItem}.
- * <p>POST /api/payments/ipn: VNPay gọi server-to-server báo kết quả.
+ * <p>GET hoặc POST /api/payments/ipn: VNPay gọi server-to-server báo kết quả.
  */
 @RestController
 @RequestMapping("/api/payments")
@@ -73,6 +74,11 @@ public class PaymentController {
   /**
    * IPN server-to-server từ VNPay.
    *
+   * <p>Nhận CẢ {@code GET} lẫn {@code POST}: tài liệu VNPay 2.1.0 ghi rõ IPN
+   * URL được VNPay gọi bằng phương thức {@code GET}
+   * ({@code https://{domain}/IPN?vnp_Amount=...&vnp_SecureHash=...}), còn bản
+   * cũ dùng {@code POST}. Nhận cả hai thì không phụ thuộc gateway nào.
+   *
    * <p>KHÔNG khai báo {@code consumes}: nếu khai {@code application/x-www-form-urlencoded}
    * thì một request sai Content-Type sẽ bị Spring trả <b>415</b> ⇒ VNPay coi là
    * lỗi server và retry mãi. Bỏ ràng buộc này thì request vẫn vào được handler
@@ -81,7 +87,10 @@ public class PaymentController {
    * <p>Lỗi HẠ TẦNG (DB) cố ý KHÔNG bị bắt ở đây: nó nổi lên ⇒ HTTP 5xx ⇒
    * VNPay retry. Xem {@code PaymentService.handleIpn}.
    */
-  @PostMapping(value = "/ipn", produces = "application/json")
+  @RequestMapping(
+      value = "/ipn",
+      method = {RequestMethod.GET, RequestMethod.POST},
+      produces = "application/json")
   @ResponseStatus(HttpStatus.OK)
   public String ipn(@RequestParam MultiValueMap<String, String> params) {
     return paymentService.handleIpn(toMap(params));

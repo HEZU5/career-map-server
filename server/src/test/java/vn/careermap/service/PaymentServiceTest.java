@@ -543,6 +543,42 @@ class PaymentServiceTest {
     assertThat(response.payUrl()).doesNotContain("vnp_IpAddr");
   }
 
+  /**
+   * Header {@code X-Forwarded-For} do CLIENT kiểm soát ⇒ ký tự lạ không được
+   * lọt vào {@code vnp_IpAddr} (và vào cả chữ ký). IP sai dạng ⇒ bỏ tham số.
+   */
+  @Test
+  void payUrlLoaiKyTuLaTrongIpAddr() {
+    when(playerRepository.findByPlayerKey("ip2"))
+        .thenReturn(Optional.of(player("ip2", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "ip2", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("ip2", "203.0.113.7<script>");
+
+    assertThat(response.payUrl()).doesNotContain("vnp_IpAddr");
+    assertThat(response.payUrl()).doesNotContain("script");
+  }
+
+  /** IP đúng dạng thì vẫn được gửi. */
+  @Test
+  void payUrlGuiIpDungDang() {
+    when(playerRepository.findByPlayerKey("ip3"))
+        .thenReturn(Optional.of(player("ip3", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "ip3", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("ip3", "203.0.113.7");
+
+    assertThat(response.payUrl()).contains("vnp_IpAddr=203.0.113.7");
+  }
+
   /** Gateway VNPay đổi được bằng biến môi trường, KHÔNG cần sửa code. */
   @Test
   void payUrlDungBaseUrlTuCauHinh() {
@@ -574,6 +610,77 @@ class PaymentServiceTest {
     Map<String, String> params = parseQuery(response.payUrl());
     String hash = params.remove("vnp_SecureHash");
     assertThat(hash).hasSize(128);
+  }
+
+  /**
+   * API 2.1.0 ({@code vnp_Command=pay}) là MỘT BỘ GIAO THỨC RIÊNG: bắt buộc
+   * {@code vnp_Version} + {@code vnp_OrderType}, và KHÔNG được gửi
+   * {@code vnp_SecureHashType} (tài liệu "Chuyển đổi phiên bản và thuật toán mã
+   * hoá": 2.1.0 không gửi tham số này).
+   */
+  @Test
+  void payUrlApi21CoVersionVaOrderTypeVaKhongCoSecureHashType() {
+    VnpayConfig api21 = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html", "SHA512", "SHA512",
+        "pay", "2.1.0", "other");
+    PaymentService api21Service = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(api21),
+        api21);
+    when(playerRepository.findByPlayerKey("api21"))
+        .thenReturn(Optional.of(player("api21", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "api21", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = api21Service.createOrder("api21");
+
+    assertThat(response.payUrl()).contains("vnp_Command=pay");
+    assertThat(response.payUrl()).contains("vnp_Version=2.1.0");
+    assertThat(response.payUrl()).contains("vnp_OrderType=other");
+    assertThat(response.payUrl()).doesNotContain("vnp_SecureHashType");
+  }
+
+  /**
+   * Mọi giá trị gửi lên VNPay phải là tiếng Việt KHÔNG DẤU, không khoảng trắng
+   * (chuẩn VNPay). {@code vnp_OrderInfo} cố định là ASCII; URL bị bỏ dấu.
+   */
+  @Test
+  void payUrlChiGuiGiaTriHopLeChuanVnPay() {
+    VnpayConfig coDau = new VnpayConfig(
+        true, "TMNCODE", "secret",
+        "https://app.example/kết-quá-thanh-toán",
+        "https://app.example/api/payments/ipn");
+    PaymentService service2 = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(coDau),
+        coDau);
+    when(playerRepository.findByPlayerKey("sau"))
+        .thenReturn(Optional.of(player("sau", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "sau", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service2.createOrder("sau");
+
+    // vnp_OrderInfo: ASCII, khong dau, khong khoang trang.
+    assertThat(response.payUrl()).contains("vnp_OrderInfo=Bao+cao+Holland");
+    // URL co dau da duoc bo dau.
+    assertThat(response.payUrl())
+        .contains("vnp_ReturnUrl=https%3A%2F%2Fapp.example%2Fket-qua-thanh-toan");
+    // Khong con ky tu co dau trong toan bo payUrl.
+    assertThat(response.payUrl()).doesNotContain("ế");
   }
 
   /**

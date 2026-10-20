@@ -14,17 +14,20 @@ import java.time.Instant;
  * <p>Nội dung báo cáo chỉ đọc được qua {@code GET /api/payments/{orderId}?playerKey=}
  * — endpoint đó kiểm tra chủ đơn.
  *
- * @param orderId     khoá đơn (= {@code vnp_TxnRef})
- * @param status      {@code PENDING} / {@code PAID} / {@code EXPIRED}
- * @param amount      số tiền (VND)
- * @param createdAt   lúc tạo đơn
- * @param expiresAt   mốc hết hạn thanh toán
- * @param hollandCode mã Holland tính từ {@code riasecJson}; {@code ""} nếu chưa có
+ * <p>KHÔNG có {@code hollandCode} nữa: đó là 1 chữ cái đủ để NGƯỜI KHÁC đoán ra
+ * loại báo cáo của người chơi chỉ với {@code playerKey}. Client hiện không gọi
+ * endpoint lịch sử này (lịch sử dựng từ {@code session.myOrderIds} + gọi
+ * {@code GET /api/payments/{orderId}}), nên bỏ đi là miễn phí.
+ *
+ * @param orderId   khoá đơn (= {@code vnp_TxnRef})
+ * @param status    {@code PENDING} / {@code PAID} / {@code EXPIRED}
+ * @param amount    số tiền (VND)
+ * @param createdAt lúc tạo đơn
+ * @param expiresAt mốc hết hạn thanh toán
  */
 public record PaymentHistoryItem(
     String orderId,
     String status,
     long amount,
     Instant createdAt,
-    Instant expiresAt,
-    String hollandCode) {}
+    Instant expiresAt) {}

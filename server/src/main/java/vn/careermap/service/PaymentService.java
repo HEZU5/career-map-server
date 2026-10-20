@@ -51,10 +51,15 @@ public class PaymentService {
 
   private static final DateTimeFormatter VNPAY_DATE_TIME =
       DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.of("Asia/Ho_Chi_Minh"));
-  private static final String VNP_COMMAND = "pay_web";
 
-  /** Mô tả đơn gửi kèm cho VNPay ({@code vnp_OrderInfo}); tối đa 50 ký tự. */
-  private static final String VNP_ORDER_INFO = "Báo cáo Holland";
+  /**
+   * Mô tả đơn gửi kèm cho VNPay ({@code vnp_OrderInfo}).
+   *
+   * <p>CHUẨN VNPay: tiếng Việt KHÔNG DẤU và không ký tự đặc biệt (mọi giá trị
+   * gửi đi đều phải vậy). Nên dùng ASCII không dấu, không khoảng trắng:
+   * {@code "Bao cao Holland"}.
+   */
+  private static final String VNP_ORDER_INFO = "Bao cao Holland";
 
   /**
    * Khoá tạo đơn theo {@code playerKey} — dải khoá (striped lock).
@@ -225,24 +230,31 @@ public class PaymentService {
     params.put("vnp_TmnCode", vnpayConfig.getTmnCode());
     params.put("vnp_TxnRef", order.getId());
     params.put("vnp_Amount", String.valueOf(order.getAmount() * 100));
-    params.put("vnp_Command", VNP_COMMAND);
+    params.put("vnp_Command", vnpayConfig.getCommand());
     params.put("vnp_CreateDate", createDate);
     params.put("vnp_ExpireDate", expireDate);
     params.put("vnp_CurrCode", "VND");
     params.put("vnp_Locale", "vn");
-    params.put("vnp_ReturnUrl", vnpayConfig.getReturnUrl());
-    params.put("vnp_IpnUrl", vnpayConfig.getIpnUrl());
-    // vnp_OrderInfo: BAT BUOC voi lenh pay_web.
+    params.put("vnp_ReturnUrl", vnpaySafe(vnpayConfig.getReturnUrl(), "vnp_ReturnUrl"));
+    params.put("vnp_IpnUrl", vnpaySafe(vnpayConfig.getIpnUrl(), "vnp_IpnUrl"));
+    // vnp_OrderInfo: BAT BUOC voi lenh pay_web. ASCII khong dau, khong khoang
+    // trang (chu VNPay).
     params.put("vnp_OrderInfo", VNP_ORDER_INFO);
+    // vnp_Version / vnp_OrderType: chi co y nghia voi API 2.1.0 (vnp_Command=pay).
+    // RONG = khong gui (API cu khong co hai tham so nay).
+    putIfNotBlank(params, "vnp_Version", vnpayConfig.getVersion());
+    putIfNotBlank(params, "vnp_OrderType", vnpayConfig.getOrderType());
     // vnp_IpAddr: IP nguoi mua. Khong co header X-Forwarded-For thi BO QUA
     // (gia tri rong se bi loc khoi chu ky nhu chuan VNPay).
-    if (clientIp != null && !clientIp.isBlank()) {
-      params.put("vnp_IpAddr", clientIp.trim());
+    String ip = vnpayIp(clientIp);
+    if (!ip.isEmpty()) {
+      params.put("vnp_IpAddr", ip);
     }
     // vnp_SecureHashType: chi gui khi duoc cau hinh. Khong gui thi gateway
     // co the tu mac dinh SHA512 => hash lech => gateway tu choi don.
+    // API 2.1.0 KHONG duoc gui tham so nay (tai lieu VNPay) => bo qua.
     String hashType = vnpayConfig.getHashType();
-    if (hashType != null && !hashType.isBlank()) {
+    if (hashType != null && !hashType.isBlank() && vnpayConfig.allowsSecureHashType()) {
       params.put("vnp_SecureHashType", hashType.trim());
     }
     // KHONG gui vnp_TxnExpireDate: KHONG phai param chuan cua API cu
@@ -253,24 +265,128 @@ public class PaymentService {
     return new CreatePaymentResponse(order.getId(), payUrl, order.getExpiresAt());
   }
 
+  /** Chỉ thêm tham số khi giá trị không rỗng (rỗng thì KHÔNG gửi lên VNPay). */
+  private static void putIfNotBlank(Map<String, String> params, String key, String value) {
+    if (value != null && !value.isBlank()) {
+      params.put(key, value.trim());
+    }
+  }
+
+  /**
+   * Chuẩn hoá giá trị gửi lên VNPay: bỏ DẤU tiếng Việt và bỏ KHOẢNG TRẮNG.
+   *
+   * <p>VNPay yêu cầu mọi giá trị gửi đi là tiếng Việt không dấu, không ký tự
+   * đặc biệt. URL có dấu là URL hỏng (gateway không đọc được) — nên bỏ dấu
+   * luôn thay vì để người vận hành tự phát hiện.
+   *
+   * @param name tên tham số (để log khi phải sửa giá trị)
+   */
+  private String vnpaySafe(String raw, String name) {
+    if (raw == null) {
+      return "";
+    }
+    String cleaned = toAsciiNoSpace(raw);
+    if (!cleaned.equals(raw)) {
+      log.warn("Gia tri {} co dau/khoang trang — da bo chuan hoa truoc khi gui VNPay.", name);
+    }
+    return cleaned;
+  }
+
+  /**
+   * Chuẩn hoá {@code vnp_IpAddr}: chỉ nhận địa chỉ IP ĐÚNG DẠNG (IPv4 hoặc
+   * IPv6).
+   *
+   * <p>Header {@code X-Forwarded-For} do CLIENT kiểm soát ⇒ không được đẩy
+   * bừa ký tự lạ vào payUrl (và vào cả chữ ký). IP sai dạng ⇒ bỏ hẳn tham số
+   * (gateway VNPay cũng từ chối IP sai dạng).
+   */
+  private static String vnpayIp(String raw) {
+    if (raw == null) {
+      return "";
+    }
+    String trimmed = raw.trim();
+    // Chi lay IP dau tien ("ip1, ip2" -> "ip1").
+    int comma = trimmed.indexOf(',');
+    if (comma >= 0) {
+      trimmed = trimmed.substring(0, comma).trim();
+    }
+    if (IPV4.matcher(trimmed).matches()) {
+      return trimmed;
+    }
+    if (trimmed.indexOf(':') >= 0 && IPV6.matcher(trimmed).matches()) {
+      return trimmed;
+    }
+    return "";
+  }
+
+  /** IPv4: {@code 203.0.113.7}. */
+  private static final java.util.regex.Pattern IPV4 =
+      java.util.regex.Pattern.compile("^\\d{1,3}(\\.\\d{1,3}){3}$");
+
+  /** IPv6 (dạng rút gọn): chỉ ký tự hex và dấu hai chấm. */
+  private static final java.util.regex.Pattern IPV6 =
+      java.util.regex.Pattern.compile("^[0-9a-fA-F:]{2,45}$");
+
+  /**
+   * Bỏ dấu tiếng Việt + bỏ khoảng trắng + ép còn ASCII thuần.
+   *
+   * <p>Ví dụ {@code "Báo cáo Holland"} → {@code "BaocaoHolland"}.
+   *
+   * <p>Ba bước: (1) chuẩn hoá Unicode NFD rồi bỏ dấu phân tổ hợp; (2) thay
+   * các chữ KHÔNG có dấu phân tổ hợp ({@code đ}, {@code ñ}, {@code ø}…); (3) xoá
+   * mọi ký tự còn lại ngoài ASCII in được — để chắc chắn giá trị gửi đi đúng
+   * chuẩn VNPay.
+   */
+  static String toAsciiNoSpace(String raw) {
+    if (raw == null || raw.isEmpty()) {
+      return "";
+    }
+    String normalized = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFD);
+    String noMarks = normalized.replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
+    StringBuilder sb = new StringBuilder(noMarks.length());
+    for (int i = 0; i < noMarks.length(); i++) {
+      char c = noMarks.charAt(i);
+      switch (c) {
+        case 'đ' -> sb.append('d');
+        case 'Đ' -> sb.append('D');
+        case 'ñ' -> sb.append('n');
+        case 'Ñ' -> sb.append('N');
+        case 'ø' -> sb.append('o');
+        case 'Ø' -> sb.append('O');
+        case 'æ' -> sb.append("ae");
+        case 'Æ' -> sb.append("AE");
+        case 'ß' -> sb.append("ss");
+        case 'ł' -> sb.append('l');
+        case 'Ł' -> sb.append('L');
+        default -> {
+          // Bỏ khoảng trắng và mọi ký tự ngoài ASCII in được.
+          if (c > 0x20 && c < 0x7F) {
+            sb.append(c);
+          }
+        }
+      }
+    }
+    return sb.toString();
+  }
+
   /**
    * Xử lý IPN server-to-server từ VNPay.
    *
    * <p>Quy tắc (ruling mới, đảo ngược ràng buộc cũ "luôn trả HTTP 200"):
    *
    * <ul>
-   *   <li>Lỗi NGHIỆP VỤ (chữ ký sai, đơn không tồn tại, status khác
-   *       {@code "01"}, đã PAID, sai số tiền) → HTTP <b>200</b> kèm
-   *       {@code RspCode} tương ứng. Không retry cũng được vì đơn này không
-   *       bao giờ thành PAID.</li>
+   *   <li>Lỗi NGHIỆP VỤ (chữ ký sai, đơn không tồn tại, status khác mã thành
+   *       công, đã PAID, sai số tiền) → HTTP <b>200</b> kèm {@code RspCode}
+   *       tương ứng. Không retry cũng được vì đơn này không bao giờ thành
+   *       PAID.</li>
    *   <li>Lỗi HẠ TẦNG (DB lạnh, connection reset, pool hết) → để exception
    *       ném ra ⇒ HTTP <b>5xx</b> ⇒ VNPay retry. Đây là thứ phải retry:
    *       tiền ĐÃ vào mà đơn kẹt PENDING thì người chơi mất tiền.</li>
    * </ul>
    *
-   * <p>Thứ tự: verify chữ ký → {@code vnp_TransactionStatus == "01"} → tra đơn
-   * theo {@code vnp_TxnRef} → nếu đã PAID → kiểm tra số tiền → đánh dấu PAID +
-   * lưu. IPN tới sau khi đơn EXPIRED vẫn nhận PAID (tiền đã vào).
+   * <p>Thứ tự: verify chữ ký → giao dịch có thành công không → tra đơn theo
+   * {@code vnp_TxnRef} → nếu đã PAID → kiểm tra số tiền → đánh dấu PAID + lưu.
+   * IPN tới sau khi đơn EXPIRED vẫn nhận PAID (tiền đã vào).
    */
   @Transactional
   public String handleIpn(Map<String, String> params) {
@@ -278,8 +394,21 @@ public class PaymentService {
       if (!signatureService.verify(params)) {
         return "{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}";
       }
-      if (!"01".equals(params.get("vnp_TransactionStatus"))) {
-        return "{\"RspCode\":\"99\",\"Message\":\"Unknown error\"}";
+      if (!isSuccessfulTransaction(params)) {
+        // Giao dich THAT BAI o ngan hang (vnp_TransactionStatus != ma thanh cong).
+        //
+        // Vì sao KHONG trả 99: 99 (cùng 01/04/97) là ma "merchant chua cap nhat
+        // duoc tinh trang giao dich" => VNPAY retry toi da 10 lan, cach nhau 5
+        // phut. Mot giao dich da THAT BAI o ngan hang thi 10 lan retry cung
+        // khong bao gio thanh cong => chi la toi 50 phut cho mot IPN vô nghia.
+        //
+        // Vì sao 02 (chu khong phai 00): 02 = "merchant da cap nhat duoc tinh
+        // trang giao dich" => VNPAY KET THUC LUONG ngay. 00 giong "Confirm
+        // Success" cho mot giao dich that bai thi doi la.
+        //
+        // Don goc van de PENDING (khong phai PAID) => nguoi choi co the thu
+        // thanh toan LAI tren cung don nay (vnp_TxnRef giu nguyen).
+        return "{\"RspCode\":\"02\",\"Message\":\"Order not confirmed\"}";
       }
       String txnRef = params.get("vnp_TxnRef");
       Optional<PaymentOrder> found = orderRepository.findById(txnRef);
@@ -305,6 +434,20 @@ public class PaymentService {
       log.error("IPN xử lý thất bại (lỗi hạ tầng) — trả 5xx để VNPay retry.", e);
       throw new PaymentInfrastructureException("Lỗi hạ tầng khi xử lý IPN VNPay", e);
     }
+  }
+
+  /**
+   * Giao dịch trong IPN có THÀNH CÔNG không.
+   *
+   * <p>Mã thành công phụ thuộc BỘ GIAO THỨC: API cũ ({@code vnp_Command=pay_web})
+   * báo {@code vnp_TransactionStatus=01}, API 2.1.0 ({@code vnp_Command=pay})
+   * báo {@code 00}. Nhầm hai mã này là tiền đã vào mà đơn vẫn kẹt PENDING.
+   *
+   * @see VnpayConfig#successTransactionStatus()
+   */
+  private boolean isSuccessfulTransaction(Map<String, String> params) {
+    String status = params.get("vnp_TransactionStatus");
+    return status != null && status.trim().equals(vnpayConfig.successTransactionStatus());
   }
 
   /**
@@ -374,8 +517,7 @@ public class PaymentService {
           order.getStatus().name(),
           order.getAmount(),
           order.getCreatedAt(),
-          order.getExpiresAt(),
-          hollandCode(order.getRiasecJson())));
+          order.getExpiresAt()));
     }
     return result;
   }

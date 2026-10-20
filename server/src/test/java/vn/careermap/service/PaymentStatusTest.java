@@ -76,8 +76,15 @@ class PaymentStatusTest {
         .isSortedAccordingTo(Comparator.reverseOrder());
   }
 
+  /**
+   * Lịch sử KHÔNG được chứa mã Holland.
+   *
+   * <p>{@code hollandCode} là 1 chữ cái đủ để NGƯỜI KHÁC đoán ra loại báo cáo
+   * của người chơi chỉ với {@code playerKey} (chuỗi đoán được). Client hiện
+   * không gọi endpoint lịch sử này nên bỏ đi được, chi phí bằng 0.
+   */
   @Test
-  void lichSuGhiMaHolland() {
+  void lichSuKhongChuaMaHolland() {
     PaymentOrder paid = PaymentOrder.create("paid", "p", "R12345", 50000, 15);
     paid.markPaid(Instant.now());
     paid.setRiasecJson("{\"R\":4,\"I\":2,\"A\":1,\"S\":6,\"E\":3,\"C\":0}");
@@ -87,8 +94,10 @@ class PaymentStatusTest {
     List<PaymentHistoryItem> history = service.history("p");
 
     assertThat(history).hasSize(1);
-    assertThat(history.get(0).hollandCode()).isEqualTo("S");
     assertThat(history.get(0).status()).isEqualTo("PAID");
+    assertThat(PaymentHistoryItem.class.getRecordComponents())
+        .extracting(RecordComponent::getName)
+        .doesNotContain("hollandCode");
   }
 
   /**
@@ -105,7 +114,7 @@ class PaymentStatusTest {
         .doesNotContain("riasecJson");
   }
 
-  /** Lịch sử trả metadata đầy đủ (orderId, status, amount, createdAt, expiresAt, hollandCode). */
+  /** Lịch sử trả metadata đầy đủ (orderId, status, amount, createdAt, expiresAt). */
   @Test
   void lichSuTraDayDuMetadata() {
     PaymentOrder paid = PaymentOrder.create("paid", "p", "R12345", 50000, 15);
@@ -120,7 +129,6 @@ class PaymentStatusTest {
     assertThat(item.amount()).isEqualTo(50000L);
     assertThat(item.createdAt()).isEqualTo(paid.getCreatedAt());
     assertThat(item.expiresAt()).isEqualTo(paid.getExpiresAt());
-    assertThat(item.hollandCode()).isEqualTo("S");
   }
 
   /** Tra trạng thái đơn của CHÍNH mình thì có nội dung báo cáo + thời điểm tạo đơn. */

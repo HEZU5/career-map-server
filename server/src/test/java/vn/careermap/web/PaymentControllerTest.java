@@ -167,14 +167,42 @@ class PaymentControllerTest {
         .andExpect(content().string(containsString("\"RspCode\"")));
   }
 
-  /** Lỗi HẠ TẦNG (DB) ⇒ 5xx để VNPay retry, KHÔNG phải 200. */
+  /**
+   * Lỗi HẠ TẦNG (DB) ⇒ 5xx để VNPay retry, KHÔNG phải 200.
+   *
+   * <p>Body PHẢI có {@code RspCode} — gateway VNPay quyết định retry dựa trên
+   * RspCode trong body, không phải HTTP status. 99 ⇒ retry tối đa 10 lần.
+   */
   @Test
   void ipnLoiHaTauTra5xxDeVnPayRetry() throws Exception {
     when(orderRepository.findById("order1"))
         .thenThrow(new DataAccessResourceFailureException("connection reset"));
 
     mvc.perform(ipnPost(signedParams("order1")))
-        .andExpect(status().is5xxServerError());
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(content().string(containsString("\"RspCode\":\"99\"")));
+  }
+
+  /**
+   * IPN của API 2.1.0 được VNPay gọi bằng phương thức {@code GET}.
+   *
+   * <p>Endpoint phải nhận CẢ GET lẫn POST, nếu không thì mọi IPN của API 2.1.0
+   * đều 405 ⇒ đơn kẹt PENDING ⇒ hết hạn EXPIRED dù tiền đã vào.
+   */
+  @Test
+  void ipnNhanCaGetVaPost() throws Exception {
+    PaymentOrder order = PaymentOrder.create("order1", "p", "R12345", 50000, 15);
+    when(orderRepository.findById("order1")).thenReturn(Optional.of(order));
+    when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    mvc.perform(get("/api/payments/ipn").param("vnp_TxnRef", "order1")
+            .param("vnp_TransactionStatus", "01")
+            .param("vnp_Amount", "5000000")
+            .param("vnp_SecureHash", SIGNER.sign(signedParams("order1"))))
+        .andExpect(status().isOk())
+        .andExpect(content().string(containsString("\"RspCode\":\"00\"")));
+
+    assertThat(order.getStatus()).isEqualTo(PaymentStatus.PAID);
   }
 
   // ── Lịch sử: KHÔNG lộ nội dung báo cáo của người khác ─────────────────────
@@ -182,7 +210,8 @@ class PaymentControllerTest {
   /**
    * {@code playerKey} đoán được ({@code host-<mã phòng>}) và mã phòng công khai
    * ⇒ lịch sử KHÔNG được chứa {@code riasecJson} (nội dung báo cáo đã trả
-   * tiền — kể cả đơn CHƯA thanh toán).
+   * tiền — kể cả đơn CHƯA thanh toán) và cũng KHÔNG chứa {@code hollandCode}
+   * (1 chữ cái đủ để đoán ra loại báo cáo của người khác).
    */
   @Test
   void lichSuKhongTraNoiDungBaoCao() throws Exception {
@@ -194,9 +223,10 @@ class PaymentControllerTest {
     mvc.perform(get("/api/payments/history").param("playerKey", "p"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].orderId").value("paid"))
-        .andExpect(jsonPath("$[0].hollandCode").value("S"))
+        .andExpect(jsonPath("$[0].hollandCode").doesNotExist())
         .andExpect(jsonPath("$[0].riasecJson").doesNotExist())
-        .andExpect(content().string(not(containsString("riasecJson"))));
+        .andExpect(content().string(not(containsString("riasecJson"))))
+        .andExpect(content().string(not(containsString("hollandCode"))));
   }
 
   /** Thiếu {@code playerKey} ⇒ 400 (không tra được đơn nào). */

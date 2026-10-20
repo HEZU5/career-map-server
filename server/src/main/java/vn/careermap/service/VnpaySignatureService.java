@@ -19,6 +19,7 @@ import vn.careermap.config.VnpayConfig;
  *   <li>Bỏ {@code vnp_SecureHash} khỏi danh sách (chữ ký cũ của người khác).</li>
  *   <li>Bỏ tham số giá trị null hoặc rỗng.</li>
  *   <li>Sắp xếp key theo alphabet (TreeMap order).</li>
+ *   <li>URL-encode <b>CẢ key lẫn value</b> (UTF-8, {@code URLEncoder}).</li>
  *   <li>Nối {@code key=value} bằng {@code &}.</li>
  *   <li>HMAC theo thuật toán trong cấu hình ({@code vnpay.hash-algorithm},
  *       mặc định {@code HmacSHA256}), KHÔNG phải SHA512 với khoá
@@ -26,12 +27,17 @@ import vn.careermap.config.VnpayConfig;
  *   <li>Hex lowercase — độ dài 64 ký tự với SHA256, 128 ký tự với SHA512.</li>
  * </ol>
  *
+ * <p><b>BẤT BIẾN CỐT LÕI của VNPay:</b> chuỗi dùng để TÍNH HASH phải giống
+ * HỆT chuỗi dùng trong QUERY gửi đi. Demo chính thức của VNPay (Java / PHP /
+ * C#) làm đúng như vậy: {@code hashData} và {@code query} đều dùng
+ * {@code urlencode(key)=urlencode(value)}. Vì vậy {@link #canonical} và
+ * {@link #signedQueryString} PHẢI dùng CHUNG một hàm encode — không được
+ * hash trên giá trị thô rồi gửi giá trị đã encode (lỗi này làm mọi giao
+ * dịch bị gateway từ chối và mọi IPN bị trả {@code RspCode=97}).
+ *
  * <p>Vì sao thuật toán nằm trong cấu hình: tài liệu VNPay hiện hành mô tả API
  * mới {@code paymentv2/vpcpay.html} dùng <b>HMAC-SHA512</b> (hash 128 hex ký
- * tự), còn API cũ {@code paymentgateway/paymenturl.htm} dùng SHA256. Nếu
- * gateway của ta yêu cầu SHA512 thì chỉ cần đổi biến môi trường
- * {@code VNPAY_HASH_ALGORITHM=SHA512} + {@code VNPAY_BASE_URL=.../paymentv2/vpcpay.html}
- * — <b>không</b> cần sửa code, không cần build lại.
+ * tự), còn API cũ {@code paymentgateway/paymenturl.htm} dùng SHA256.
  */
 @Service
 public class VnpaySignatureService {
@@ -58,9 +64,13 @@ public class VnpaySignatureService {
 
   /**
    * Xác minh chữ ký của một bộ tham số IPN: ký lại từ các tham số (bỏ
-   * {@code vnp_SecureHash} và giá trị null/rỗng, sắp xếp alphabet, nối
-   * {@code key=value} bằng {@code &}, HMAC-SHA256 hex lowercase) rồi so với
-   * {@code vnp_SecureHash} nhận được.
+   * {@code vnp_SecureHash} và giá trị null/rỗng, sắp xếp alphabet, URL-encode
+   * key + value, nối {@code key=value} bằng {@code &}, HMAC hex lowercase) rồi
+   * so với {@code vnp_SecureHash} nhận được.
+   *
+   * <p>Tham số IPN tới từ container đã được GIẢI MÃ (Spring decode
+   * {@code @RequestParam}); {@link #canonical} encode lại đúng bằng cách VNPay
+   * dùng lúc gửi ({@code URLEncoder} UTF-8) ⇒ dựng lại đúng chuỗi đã hash.
    *
    * @return {@code true} nếu chữ ký khớp (so sánh không phân biệt hoa thường).
    */
@@ -76,18 +86,31 @@ public class VnpaySignatureService {
    * Query string đã sẵn sàng ghép vào payUrl, gồm {@code &vnp_SecureHash=...}
    * ở cuối (hex lowercase).
    *
-   * <p>Giá trị tham số được URL-encode (URLEncoder UTF-8) để URL hợp lệ;
-   * chữ ký vẫn tính trên giá trị thô — đúng chuẩn VNPay.
+   * <p>Key và value đều được URL-encode bằng {@link #encode} — HÀM GIỐNG HỆT
+   * hàm dùng để tính hash ({@link #canonical}). Bất biến của VNPay: <b>dạng
+   * dùng để hash phải bằng dạng dùng trong query</b>; lệch một ký tự encode là
+   * gateway từ chối đơn và IPN trả {@code RspCode=97}.
    */
   public String signedQueryString(Map<String, String> params) {
     StringBuilder sb = new StringBuilder();
     for (Map.Entry<String, String> entry : sortedEntries(params)) {
-      sb.append(entry.getKey()).append('=')
-          .append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8))
+      sb.append(encode(entry.getKey())).append('=')
+          .append(encode(entry.getValue()))
           .append('&');
     }
     sb.append(SECURE_HASH_KEY).append('=').append(sign(params));
     return sb.toString();
+  }
+
+  /**
+   * Hàm encode DUY NHẤT dùng cho cả hash lẫn query.
+   *
+   * <p>UTF-8 + {@code URLEncoder} (dấu {@code +} cho khoảng trắng, {@code %XX}
+   * hoa cho ký tự đặc biệt) — đúng như demo chính thức của VNPay
+   * ({@code URLEncoder.encode} trong Java, {@code urlencode} trong PHP).
+   */
+  private static String encode(String raw) {
+    return URLEncoder.encode(raw, StandardCharsets.UTF_8);
   }
 
   private static List<Map.Entry<String, String>> sortedEntries(Map<String, String> params) {
@@ -98,9 +121,15 @@ public class VnpaySignatureService {
         .toList();
   }
 
+  /**
+   * Chuỗi chuẩn hoá để băm: {@code key=value&key=value}, key theo alphabet,
+   * <b>key và value đều đã URL-encode</b>.
+   *
+   * <p>Phải giống HỆT phần query gửi đi — xem {@link #signedQueryString}.
+   */
   private static String canonical(Map<String, String> params) {
     return sortedEntries(params).stream()
-        .map(e -> e.getKey() + "=" + e.getValue())
+        .map(e -> encode(e.getKey()) + "=" + encode(e.getValue()))
         .collect(Collectors.joining("&"));
   }
 

@@ -2,24 +2,57 @@ package vn.careermap.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import vn.careermap.config.VnpayConfig;
 
 /**
- * Chữ ký VNPay là HMAC-SHA512 → KHÔNG: là HMAC-SHA256, khoá là HashSecret.
+ * Chữ ký VNPay là HMAC-SHA256 (API cũ) — khoá là {@code HashSecret}.
  *
- * <p>Vector cố định ở {@link #chuKyDungThuAToanSha256} tính bằng .NET
- * {@code HMACSHA256} nên là độc lập với implementation — nếu ai đó đổi nhầm
- * sang SHA512 (hex dài 128) hoặc quên bỏ {@code vnp_SecureHash}/giá trị rỏ thì
- * test đỏ.
+ * <p><b>QUAN TRỌNG — vì sao test này KHÔNG tự verify bằng chính
+ * implementation:</b> lỗi chí mạng của wave trước (hash trên giá trị THÔ
+ * trong khi query gửi giá trị ĐÃ URL-enCODE) đã LỌT QUA 147 test xanh vì
+ * mọi test đều so sánh "hash của implementation" với "hash của chính
+ * implementation". Vì vậy ở đây:
+ *
+ * <ul>
+ *   <li>Vector KỲ VĂNG được hardcode, tính bằng HMAC-SHA256 của .NET
+ *       ({@code HMACSHA256}) — độc lập hoàn toàn với code Java.</li>
+ *   <li>Test {@link #chuKyTrongQueryDungDungChuoiDaGuiLenGateway()} tự băm
+ *       chuỗi query thật bằng {@code javax.crypto.Mac} (viết tay trong test)
+ *       và so với chữ ký đính kèm — kiểm tra đúng BẤT BIẾN của VNPay:
+ *       <b>dạng dùng để hash PHẢI BẰNG dạng dùng trong query</b>.</li>
+ * </ul>
+ *
+ * <p>Chuẩn dùng để dựng vector: demo chính thức của VNPay (Java/PHP/C#) —
+ * key và value đều URL-encode, sắp xếp alphabet, nối {@code &}.
  */
 class VnpaySignatureTest {
 
+  private static final String SECRET = "secret";
+
   private final VnpayConfig config =
-      new VnpayConfig(true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn");
+      new VnpayConfig(true, "TMNCODE", SECRET, "https://app.example/return", "https://app.example/ipn");
   private final VnpaySignatureService signatureService = new VnpaySignatureService(config);
+
+  /**
+   * HMAC-SHA256 viết TAY trong test (không dùng {@link VnpaySignatureService})
+   * — độc lập với implementation cần kiểm.
+   */
+  private static String hmacSha256Hex(String secret, String data) {
+    try {
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+      return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
+    } catch (Exception e) {
+      throw new AssertionError("Không tính được HMAC-SHA256 trong test", e);
+    }
+  }
 
   @Test
   void chuKyDungThuAToanSha256() {
@@ -29,10 +62,17 @@ class VnpaySignatureTest {
 
     String hash = signatureService.sign(params);
 
-    assertThat(hash).isEqualTo("604fe97c66c6393ff22e3cae366eee1131e351ebc736bf12f5d62e1755b7a233");
+    // Vector .NET: HMACSHA256("secret", "a=1&b=2")
+    assertThat(hash)
+        .isEqualTo("604fe97c66c6393ff22e3cae366eee1131e351ebc736bf12f5d62e1755b7a233");
     assertThat(hash).hasSize(64);
   }
 
+  /**
+   * {@code vnp_SecureHash} và giá trị rỗng/không có KHÔNG được tham gia ký.
+   *
+   * <p>Vector độc lập: canonical chỉ còn {@code b=2&d=3}.
+   */
   @Test
   void boQuaSecureHashVaGiaTriRong() {
     Map<String, String> params = new LinkedHashMap<>();
@@ -44,11 +84,126 @@ class VnpaySignatureTest {
 
     String hash = signatureService.sign(params);
 
-    // Chỉ còn b=2 và d=3 mới tham gia ký.
-    Map<String, String> chiCon = new LinkedHashMap<>();
-    chiCon.put("b", "2");
-    chiCon.put("d", "3");
-    assertThat(hash).isEqualTo(signatureService.sign(chiCon));
+    // Vector .NET: HMACSHA256("secret", "b=2&d=3")
+    assertThat(hash)
+        .isEqualTo("751d53aab086158abfe76d2883ff9197eb3f978856f14f786ea16f855b676813");
+  }
+
+  /**
+   * BA tham số có ký tự đặc biệt PHẢI được hash trên dạng ĐÃ URL-enCODE.
+   *
+   * <p>{@code vnp_ReturnUrl} / {@code vnp_IpnUrl} chứa {@code ://} và {@code /};
+   * {@code vnp_OrderInfo} chứa khoảng trắng và dấu tiếng Việt. Nếu hash trên
+   * dạng thô mà query gửi dạng encode thì gateway từ chối đơn.
+   *
+   * <p>Canonical (đúng như demo chính thức VNPay):
+   * {@code vnp_IpnUrl=https%3A%2F%2Fapp.example%2Fipn&vnp_OrderInfo=B%C3%A1o+c%C3%A1o+Holland&vnp_ReturnUrl=https%3A%2F%2Fapp.example%2Freturn&vnp_TxnRef=0123456789abcdef0123456789abcdef}
+   */
+  @Test
+  void chuKyBamTrenGiaTriDaUrlEncode() {
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_ReturnUrl", "https://app.example/return");
+    params.put("vnp_IpnUrl", "https://app.example/ipn");
+    params.put("vnp_OrderInfo", "Báo cáo Holland");
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+
+    String canonical =
+        "vnp_IpnUrl=https%3A%2F%2Fapp.example%2Fipn"
+            + "&vnp_OrderInfo=B%C3%A1o+c%C3%A1o+Holland"
+            + "&vnp_ReturnUrl=https%3A%2F%2Fapp.example%2Freturn"
+            + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
+
+    // Vector .NET: HMACSHA256("secret", canonical đã encode)
+    assertThat(signatureService.sign(params))
+        .isEqualTo("08b9b54136ca0d11401fddfacbde6e0018014c93cbeb80977048aa95a2623f1c");
+    // Và đúng bằng cách băm tay trên canonical đã encode.
+    assertThat(signatureService.sign(params)).isEqualTo(hmacSha256Hex(SECRET, canonical));
+  }
+
+  /**
+   * Hash trên dạng THÔ là SAI — phải khác vector trên.
+   *
+   * <p>Khẳng định ngược lại để không bao giờ quay lại lỗi cũ: cùng bộ tham số,
+   * hash trên dạng thô phải RA KHÁC hash trên dạng đã encode.
+   */
+  @Test
+  void hashTrenGiaTriThoKhacHashTrenGiaTriDaEncode() {
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_ReturnUrl", "https://app.example/return");
+    params.put("vnp_IpnUrl", "https://app.example/ipn");
+    params.put("vnp_OrderInfo", "Báo cáo Holland");
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+
+    String rawCanonical =
+        "vnp_IpnUrl=https://app.example/ipn"
+            + "&vnp_OrderInfo=Báo cáo Holland"
+            + "&vnp_ReturnUrl=https://app.example/return"
+            + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
+
+    assertThat(signatureService.sign(params)).isNotEqualTo(hmacSha256Hex(SECRET, rawCanonical));
+  }
+
+  /**
+   * BẤT BIẾN CỐT LÕI: chữ ký phải là HMAC của ĐÚNG chuỗi query gửi lên
+   * gateway.
+   *
+   * <p>Test tự băm chuỗi query thật (bằng {@code javax.crypto.Mac} viết tay)
+   * rồi so với {@code vnp_SecureHash} đính kèm. Nếu implementation hash
+   * khác dạng query gửi đi thì test này đỏ — đây chính là lỗi đã làm hỏng
+   * toàn bộ tính năng thanh toán ở wave trước.
+   */
+  @Test
+  void chuKyTrongQueryDungDungChuoiDaGuiLenGateway() {
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    params.put("vnp_Amount", "5000000");
+    params.put("vnp_Command", "pay_web");
+    params.put("vnp_CreateDate", "20260101120000");
+    params.put("vnp_CurrCode", "VND");
+    params.put("vnp_IpAddr", "203.0.113.7");
+    params.put("vnp_Locale", "vn");
+    params.put("vnp_OrderInfo", "Báo cáo Holland");
+    params.put("vnp_ReturnUrl", "https://app.example/return");
+    params.put("vnp_IpnUrl", "https://app.example/ipn");
+
+    String query = signatureService.signedQueryString(params);
+    int marker = query.lastIndexOf("&vnp_SecureHash=");
+    assertThat(marker).isGreaterThan(0);
+    String sentToGateway = query.substring(0, marker);
+    String hashInQuery = query.substring(marker + "&vnp_SecureHash=".length());
+
+    assertThat(hashInQuery).hasSize(64);
+    assertThat(hmacSha256Hex(SECRET, sentToGateway)).isEqualTo(hashInQuery);
+  }
+
+  /**
+   * IPN về: tham số đã được container GIẢI MÃ, nhưng phải dựng lại được đúng
+   * chuỗi đã băm (URL-encode lại) để {@code verify} khớp.
+   *
+   * <p>Mô phỏng đúng luồng thật: gateway gửi {@code vnp_OrderInfo} có khoảng
+   * trắng và dấu; container giải mã thành {@code "Báo cáo Holland"};
+   * {@code verify()} encode lại rồi so chữ ký.
+   */
+  @Test
+  void verifyBamLaiDungChuoiDaGui() {
+    Map<String, String> received = new LinkedHashMap<>();
+    received.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    received.put("vnp_Amount", "5000000");
+    received.put("vnp_TransactionStatus", "01");
+    received.put("vnp_OrderInfo", "Báo cáo Holland");
+
+    String canonical =
+        "vnp_Amount=5000000"
+            + "&vnp_OrderInfo=B%C3%A1o+c%C3%A1o+Holland"
+            + "&vnp_TransactionStatus=01"
+            + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
+    received.put("vnp_SecureHash", hmacSha256Hex(SECRET, canonical));
+
+    assertThat(signatureService.verify(received)).isTrue();
+
+    // Chữ ký tính trên dạng thô KHÔNG được chấp nhận.
+    received.put("vnp_SecureHash", hmacSha256Hex(SECRET, "vnp_Amount=5000000&vnp_OrderInfo=Báo cáo Holland&vnp_TransactionStatus=01&vnp_TxnRef=0123456789abcdef0123456789abcdef"));
+    assertThat(signatureService.verify(received)).isFalse();
   }
 
   /**
