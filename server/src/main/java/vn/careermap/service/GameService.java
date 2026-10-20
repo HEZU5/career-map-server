@@ -95,18 +95,16 @@ public class GameService {
     if (roll == null) {
       throw new NotYourTurnException(room.getCode());
     }
+    broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
     // Kiểm tra đủ điều kiện SAU khi rollAndMove đã cộng completedLaps — đúng lúc
     // đi qua ô START thì completedLaps vừa tăng lên 1. Kiểm tra TRƯỚC sẽ không
     // bao giờ bắt được "vừa đi qua START".
-    boolean duDieuKien = isEligibleToWin(player);
-    if (duDieuKien) {
-      awardWinBonus(player);
-    }
-    broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
-    if (duDieuKien) {
+    //
+    // maybeAutoFinish là ĐƯỜNG DÙNG CHUNG với TurnScheduler (server tự tung khi
+    // client offline) — xem javadoc của nó để biết vì sao phải gộp.
+    GameSnapshot finished = maybeAutoFinish(room, player, roll.moved());
+    if (finished != null) {
       // Ván kết thúc NGAY: người vừa đi qua START là người thắng.
-      String winnerKey = player.getPlayerKey();
-      finishWithWinner(room, winnerKey);
       return new DiceResponse(
           roll.value(),
           roll.position(),
@@ -114,9 +112,40 @@ public class GameService {
           roll.auto(),
           room.getTurnId(),
           true,
-          winnerKey);
+          room.getWinnerKey());
     }
     return new DiceResponse(roll.value(), roll.position(), roll.moved(), roll.auto(), room.getTurnId());
+  }
+
+  /**
+   * Tự kết thúc ván khi người chơi vừa đi qua ô START và đủ điều kiện thắng.
+   *
+   * <p>ĐƯỜNG DÙNG CHUNG cho CẢ HAI cách kết thúc ván:
+   *
+   * <ul>
+   *   <li>{@link #rollDice(RollRequest)} — người chơi bấm tay, client tự tung,
+   *       máy trọng tài tự tung.
+   *   <li>{@code TurnScheduler.sweepExpiredTurns()} — SERVER tự tung khi đồng
+   *       hồ hết hạn (client offline/lag).
+   * </ul>
+   *
+   * <p>Vì sao phải gộp: trước đây đường của server tự tung gọi thẳng
+   * {@code TurnCoordinator.expireTurn} nên LUẬT TỰ KẾT THÚC KHÔNG CHẠY —
+   * người chơi đi qua ô START đủ điều kiện mà ván vẫn cứ tiếp tục.
+   *
+   * @param moved quân có THẬT SỰ di chuyển không. Lượt xếp thứ tự đầu ván
+   *     {@code moved=false} ⇒ không thể vừa đi qua ô START ⇒ không kết thúc.
+   * @return ảnh chụp ván đã kết thúc, hoặc {@code null} nếu ván chưa kết thúc
+   */
+  @Transactional
+  public GameSnapshot maybeAutoFinish(Room room, Player player, boolean moved) {
+    if (!moved) {
+      return null;
+    }
+    if (!isEligibleToWin(player)) {
+      return null;
+    }
+    return finishWithWinner(room, player.getPlayerKey());
   }
 
   /** Ván một người chơi: không có phòng, không đồng hồ, giữ luật đi cũ. */
@@ -240,11 +269,23 @@ public class GameService {
    * <p>Thứ tự thao tác giữ nguyên như {@code finish()} cũ: chốt trạng thái →
    * chụp điểm RIASEC (trước khi {@code RoomJanitor} dọn phòng) → đóng lượt →
    * bắn sự kiện {@code FINISHED} cho mọi client trong phòng.
+   *
+   * <p>IDEMPOTENT: nếu ván đã kết thúc rồi thì trả về ảnh chụp hiện tại và
+   * KHÔNG làm gì thêm. Không có chốt này thì chủ phòng bấm "Kết thúc" đúng
+   * lúc người chơi đi qua ô START ⇒ hai lần ghi trạng thái ⇒ HAI sự kiện
+   * {@code FINISHED} và HAI lần cộng điểm thưởng.
    */
   private GameSnapshot finishWithWinner(Room room, String winnerKey) {
+    if (room.isFinished()) {
+      return snapshotBuilder.build(room);
+    }
     room.setStatus(RoomStatus.FINISHED);
     room.setFinishedAt(Instant.now());
     room.setWinnerKey(winnerKey);
+    // Điểm thưởng cho NGƯỜI THẮNG — nằm ở TRONG hàm này nên CẢ HAI đường
+    // kết thúc (tự kết thúc khi đi qua START, và chủ phòng bấm nút) đều
+    // thưởng như nhau: không phụ thuộc cách ván kết thúc.
+    awardWinBonus(room, winnerKey);
     // Chụp điểm RIASEC ngay lúc này: sau khi đã chốt người thắng, trước khi
     // broadcast. 30 phút sau RoomJanitor xoá phòng (xoá Room → cascade Player →
     // cascade Score) nên điểm gốc biến mất; đơn thanh toán 50.000đ được tạo
@@ -270,6 +311,24 @@ public class GameService {
       return;
     }
     player.addWinPoints((int) Math.min(bonus, Integer.MAX_VALUE));
+  }
+
+  /**
+   * Cộng điểm chiến thắng cho người thắng của ván (tra theo key trong phòng).
+   *
+   * <p>Gọi từ {@link #finishWithWinner(Room, String)} ⇒ điểm thưởng áp cho cả
+   * hai đường kết thúc. Không có người thắng (ván kết thúc không ai đủ ngưỡng)
+   * thì không ai được thưởng.
+   */
+  private void awardWinBonus(Room room, String winnerKey) {
+    if (winnerKey == null) {
+      return;
+    }
+    Player winner = room.findPlayer(winnerKey);
+    if (winner == null) {
+      return;
+    }
+    awardWinBonus(winner);
   }
 
   /**

@@ -6,8 +6,11 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +19,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import vn.careermap.config.GameRulesConfig;
 import vn.careermap.domain.Player;
 import vn.careermap.domain.Room;
@@ -23,6 +27,7 @@ import vn.careermap.domain.RoomStatus;
 import vn.careermap.domain.TurnPhase;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.DiceResponse;
+import vn.careermap.web.dto.FinishRequest;
 import vn.careermap.web.dto.GameSnapshot;
 import vn.careermap.web.dto.RollRequest;
 
@@ -246,5 +251,120 @@ class GameAutoFinishTest {
     assertThat(res.gameFinished()).isFalse();
     assertThat(res.winnerKey()).isNull();
     assertThat(p.getWinPoints()).isEqualTo(0);
+  }
+
+  // ── Kết thúc idempotent: hai đường kết thúc không được trùng nhau ────────
+
+  /**
+   * Gọi chốt kết thúc HAI lần ⇒ chỉ kết thúc MỘT lần, chỉ cộng điểm MỘT lần.
+   *
+   * <p>Đây là chốt chặn race: chủ phòng bấm "Kết thúc" đúng lúc người chơi đi
+   * qua ô START ⇒ hai lần ghi trạng thái ⇒ hai sự kiện FINISHED và hai lần cộng
+   * điểm thưởng.
+   */
+  @Test
+  void goiFinishHaiLanChiKetThucMotLanVaCongDiemMotLan() {
+    Player p = player("owner", 1, 12);
+    Room room = room("owner", p);
+    GameService gameService = service(RULES);
+
+    gameService.maybeAutoFinish(room, p, true);
+    gameService.maybeAutoFinish(room, p, true);
+
+    assertThat(room.getStatus()).isEqualTo(RoomStatus.FINISHED);
+    assertThat(room.getWinnerKey()).isEqualTo("owner");
+    assertThat(p.getWinPoints()).isEqualTo(5);
+    verify(broadcaster, times(1)).gameFinished(eq("H12345"), any(GameSnapshot.class), eq("owner"));
+  }
+
+  @Test
+  void chuPhongBamKetThucTrungLucVanhTuKetThucChiKetThucMotLan() {
+    Player p = player("owner", 0, 12);
+    Room room = room("owner", p);
+    moLuot(room, p);
+    GameService gameService = service(RULES);
+    stubRollQuaStart();
+
+    // Ván tự kết thúc (đi qua ô START)…
+    gameService.rollDice(new RollRequest("owner", room.getTurnId(), false, "manual"));
+    // …rồi chủ phòng bấm "Kết thúc" đúng khoảnh khắc đó.
+    gameService.finish(new FinishRequest("owner"));
+
+    assertThat(room.getStatus()).isEqualTo(RoomStatus.FINISHED);
+    assertThat(room.getWinnerKey()).isEqualTo("owner");
+    assertThat(p.getWinPoints()).isEqualTo(5);
+    verify(broadcaster, times(1)).gameFinished(anyString(), any(), anyString());
+  }
+
+  // ── Điểm thưởng: cả hai đường kết thúc đều thưởng như nhau ─────────────
+
+  @Test
+  void chuPhongKetThucCungThuongDiemChoNguoiThang() {
+    // Chủ phòng bấm "Kết thúc" ⇒ người đủ ngưỡng vẫn được thưởng, không phụ
+    // thuộc cách ván kết thúc.
+    Player nguoiThang = player("guest-1", 1, 12);
+    Room room = room("owner", nguoiThang, player("owner", 0, 0));
+    GameService gameService = service(RULES);
+
+    gameService.finish(new FinishRequest("owner"));
+
+    assertThat(room.getWinnerKey()).isEqualTo("guest-1");
+    assertThat(nguoiThang.getWinPoints()).isEqualTo(5);
+    verify(broadcaster).gameFinished(eq("H12345"), any(GameSnapshot.class), eq("guest-1"));
+  }
+
+  @Test
+  void vanKetThucKhongCoNguoiThangThiKhongAiDuocThuong() {
+    Player p = player("owner", 0, 11); // không ai đủ ngưỡng
+    Room room = room("owner", p);
+    GameService gameService = service(RULES);
+
+    gameService.finish(new FinishRequest("owner"));
+
+    assertThat(room.getStatus()).isEqualTo(RoomStatus.FINISHED);
+    assertThat(room.getWinnerKey()).isNull();
+    assertThat(p.getWinPoints()).isEqualTo(0);
+    verify(broadcaster).gameFinished(eq("H12345"), any(GameSnapshot.class), eq((String) null));
+  }
+
+  // ── Thứ tự thao tác trong finishWithWinner ───────────────────────────────
+
+  /**
+   * Chụp điểm RIASEC phải chạy TRƯỚC {@code clearTurn()}.
+   *
+   * <p>Đảo thứ tự này phá hợp đồng chụp điểm: lượt đã đóng thì ảnh chụp mất
+   * dữ liệu ván, đơn thanh toán đọc ra số 0.
+   */
+  @Test
+  void thuTuThaoTacTrongFinishWithWinner() {
+    Player p = player("owner", 1, 12);
+    Room room = spy(Room.create("H12345", "Chủ phòng", false, "owner"));
+    room.setActive(true);
+    room.setStatus(RoomStatus.PLAYING);
+    room.addPlayer(p); // gán phòng cho player
+    byKey.put("owner", p);
+    GameService gameService = service(RULES);
+
+    gameService.finish(new FinishRequest("owner"));
+
+    InOrder inOrder = inOrder(room);
+    inOrder.verify(room).captureRiasecSnapshot();
+    inOrder.verify(room).clearTurn();
+  }
+
+  /** Client nhận GAME (state ván) trước, rồi mới nhận FINISHED (bảng kết quả). */
+  @Test
+  void thuTuBroadcastGameUpdatedKeGameFinished() {
+    Player p = player("owner", 0, 12);
+    Room room = room("owner", p);
+    moLuot(room, p);
+    GameService gameService = service(RULES);
+    stubRollQuaStart();
+
+    gameService.rollDice(new RollRequest("owner", room.getTurnId(), false, "manual"));
+
+    InOrder inOrder = inOrder(broadcaster);
+    inOrder.verify(broadcaster).gameUpdated(eq("H12345"), any(GameSnapshot.class));
+    inOrder.verify(broadcaster).gameFinished(eq("H12345"), any(GameSnapshot.class), eq("owner"));
   }
 }

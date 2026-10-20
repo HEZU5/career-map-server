@@ -5,9 +5,11 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import vn.careermap.domain.Player;
 import vn.careermap.domain.Room;
 import vn.careermap.domain.TurnPhase;
+import vn.careermap.web.dto.GameSnapshot;
 
 /**
  * Đồng hồ server: quét định kỳ và xử lý mọi lượt đã quá hạn.
@@ -19,6 +21,11 @@ import vn.careermap.domain.TurnPhase;
  *
  * <p>Có độ trễ cố ý ({@link #SWEEP_DELAY_MS}) để không cạnh tranh với lần tự tung
  * phía client, giảm tải request không cần thiết.
+ *
+ * <p>Lượt do server tự tung PHẢI đi qua cùng luật với lượt do client tự tung:
+ * {@link GameService#maybeAutoFinish(Room, Player, boolean)}. Trước đây đường
+ * này gọi thẳng {@code TurnCoordinator.expireTurn} nên luật tự kết thúc khi đi
+ * qua ô START không bao giờ chạy.
  */
 @Component
 public class TurnScheduler {
@@ -32,19 +39,38 @@ public class TurnScheduler {
   private final TurnCoordinator turns;
   private final GameBroadcaster broadcaster;
   private final GameSnapshotBuilder snapshotBuilder;
+  private final GameService gameService;
 
+  /**
+   * {@code GameService} được inject vào đây để ĐƯỜNG SERVER TỰ TUNG dùng chung
+   * luật tự kết thúc với đường người chơi tự tung ({@code GameService.rollDice}).
+   *
+   * <p>Không tạo vòng phụ thuộc: {@code GameService} không inject
+   * {@code TurnScheduler}.
+   */
   public TurnScheduler(
       RoomQueryService rooms,
       TurnCoordinator turns,
       GameBroadcaster broadcaster,
-      GameSnapshotBuilder snapshotBuilder) {
+      GameSnapshotBuilder snapshotBuilder,
+      GameService gameService) {
     this.rooms = rooms;
     this.turns = turns;
     this.broadcaster = broadcaster;
     this.snapshotBuilder = snapshotBuilder;
+    this.gameService = gameService;
   }
 
-  /** @return số lượt đã được xử lý. */
+  /**
+   * Quét và xử lý các lượt đã quá hạn.
+   *
+   * <p>Có transaction vì các thay đổi trên {@code Room} (lượt mới, ván kết
+   * thúc) PHẢI được ghi xuống DB — nếu không, phòng vẫn giữ lượt cũ đã hết
+   * hạn và nhịp quét sau lại xử lý lại lượt đó.
+   *
+   * @return số lượt đã được xử lý.
+   */
+  @Transactional
   public int sweepExpiredTurns() {
     Instant now = Instant.now();
     int handled = 0;
@@ -62,7 +88,17 @@ public class TurnScheduler {
       String reason =
           room.getTurnPhase() == TurnPhase.WAITING_ROLL ? "sweep-timeout" : "sweep-answer-timeout";
       TurnCoordinator.TurnRoll roll = turns.expireTurn(room, player, reason);
-      if (roll != null || room.getTurnPhase() == TurnPhase.NONE) {
+      // SERVER tự tung cũng phải áp luật tự kết thúc — CÙNG một đường với
+      // GameService.rollDice, nếu không thì người chơi đi qua ô START đủ điều
+      // kiện mà ván vẫn cứ tiếp tục. Chỉ chạy khi quân THẬT SỰ di chuyển
+      // (lượt xếp thứ tự đầu ván có moved=false).
+      GameSnapshot finished =
+          gameService.maybeAutoFinish(room, player, roll != null && roll.moved());
+      if (finished != null) {
+        // finishWithWinner đã bắn FINISHED kèm ảnh chụp đầy đủ — không bắn
+        // thêm GAME để tránh hai sự kiện trùng nhau.
+        handled++;
+      } else if (roll != null || room.getTurnPhase() == TurnPhase.NONE) {
         broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
         handled++;
       }
