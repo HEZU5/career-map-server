@@ -95,7 +95,27 @@ public class GameService {
     if (roll == null) {
       throw new NotYourTurnException(room.getCode());
     }
+    // Kiểm tra đủ điều kiện SAU khi rollAndMove đã cộng completedLaps — đúng lúc
+    // đi qua ô START thì completedLaps vừa tăng lên 1. Kiểm tra TRƯỚC sẽ không
+    // bao giờ bắt được "vừa đi qua START".
+    boolean duDieuKien = isEligibleToWin(player);
+    if (duDieuKien) {
+      awardWinBonus(player);
+    }
     broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
+    if (duDieuKien) {
+      // Ván kết thúc NGAY: người vừa đi qua START là người thắng.
+      String winnerKey = player.getPlayerKey();
+      finishWithWinner(room, winnerKey);
+      return new DiceResponse(
+          roll.value(),
+          roll.position(),
+          roll.moved(),
+          roll.auto(),
+          room.getTurnId(),
+          true,
+          winnerKey);
+    }
     return new DiceResponse(roll.value(), roll.position(), roll.moved(), roll.auto(), room.getTurnId());
   }
 
@@ -108,6 +128,11 @@ public class GameService {
     player.setCurrentPosition(next);
     if (raw < 0) {
       player.addCompletedLaps(1);
+    }
+    // Không có phòng để broadcast ⇒ trạng thái kết thúc truyền qua response.
+    if (isEligibleToWin(player)) {
+      awardWinBonus(player);
+      return new DiceResponse(value, next, true, false, 0, true, player.getPlayerKey());
     }
     return new DiceResponse(value, next, true, false, 0);
   }
@@ -196,9 +221,30 @@ public class GameService {
     if (room.isFinished()) {
       return snapshotBuilder.build(room);
     }
+    log.info("[FINISH] phong={} ket-thuc-boi={}", room.getCode(), player.getName());
+    return finishWithWinner(room, pickWinner(room));
+  }
+
+  /**
+   * Chốt kết thúc ván với người thắng đã chọn.
+   *
+   * <p>Dùng chung cho HAI đường kết thúc:
+   *
+   * <ul>
+   *   <li>Chủ phòng bấm nút kết thúc ⇒ người thắng do {@link #pickWinner(Room)}
+   *       chấm.
+   *   <li>Ván tự kết thúc khi người chơi đủ điều kiện đi qua ô START ⇒ người
+   *       thắng là người vừa đi qua START.
+   * </ul>
+   *
+   * <p>Thứ tự thao tác giữ nguyên như {@code finish()} cũ: chốt trạng thái →
+   * chụp điểm RIASEC (trước khi {@code RoomJanitor} dọn phòng) → đóng lượt →
+   * bắn sự kiện {@code FINISHED} cho mọi client trong phòng.
+   */
+  private GameSnapshot finishWithWinner(Room room, String winnerKey) {
     room.setStatus(RoomStatus.FINISHED);
     room.setFinishedAt(Instant.now());
-    room.setWinnerKey(pickWinner(room));
+    room.setWinnerKey(winnerKey);
     // Chụp điểm RIASEC ngay lúc này: sau khi đã chốt người thắng, trước khi
     // broadcast. 30 phút sau RoomJanitor xoá phòng (xoá Room → cascade Player →
     // cascade Score) nên điểm gốc biến mất; đơn thanh toán 50.000đ được tạo
@@ -206,11 +252,24 @@ public class GameService {
     room.captureRiasecSnapshot();
     room.clearTurn();
     room.setPendingAnswer(false);
-    log.info("[FINISH] phong={} ket-thuc-boi={} nguoi-thang={}",
-        room.getCode(), player.getName(), room.getWinnerKey());
+    log.info("[FINISH] phong={} nguoi-thang={}", room.getCode(), room.getWinnerKey());
     GameSnapshot snapshot = snapshotBuilder.build(room);
     broadcaster.gameFinished(room.getCode(), snapshot, room.getWinnerKey());
     return snapshot;
+  }
+
+  /**
+   * Cộng điểm chiến thắng cho người vừa đủ điều kiện.
+   *
+   * <p>Điểm thưởng đọc từ {@link GameRulesConfig#getWinBonusPoints()} (biến môi
+   * trường {@code WIN_BONUS_POINTS}) — SERVER tự cộng, không nhận điểm từ client.
+   */
+  private void awardWinBonus(Player player) {
+    long bonus = rules.getWinBonusPoints();
+    if (bonus <= 0) {
+      return;
+    }
+    player.addWinPoints((int) Math.min(bonus, Integer.MAX_VALUE));
   }
 
   /**

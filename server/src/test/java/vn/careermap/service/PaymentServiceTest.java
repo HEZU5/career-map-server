@@ -42,7 +42,7 @@ import vn.careermap.web.dto.WinnerResponse;
 class PaymentServiceTest {
 
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false, 5L);
   private static final VnpayConfig VNPAY =
       new VnpayConfig(true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn");
 

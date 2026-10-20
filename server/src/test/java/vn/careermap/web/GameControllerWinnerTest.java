@@ -21,7 +21,7 @@ import vn.careermap.web.dto.WinnerResponse;
 class GameControllerWinnerTest {
 
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true, 5L);
 
   private GameService gameService() {
     GameService service = mock(GameService.class);

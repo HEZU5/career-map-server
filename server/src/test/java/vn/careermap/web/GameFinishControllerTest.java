@@ -37,7 +37,7 @@ import vn.careermap.web.dto.GameSnapshot;
 class GameFinishControllerTest {
 
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false, 5L);
 
   @Autowired MockMvc mvc;
 

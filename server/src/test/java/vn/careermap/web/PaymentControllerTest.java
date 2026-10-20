@@ -63,7 +63,7 @@ class PaymentControllerTest {
   static class ServiceConfig {
     @Bean
     GameRulesConfig rules() {
-      return new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true);
+      return new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true, 5L);
     }
 
     @Bean

@@ -65,6 +65,15 @@ public class GameRulesConfig {
    */
   public final boolean vnpayEnabled;
 
+  /**
+   * Điểm chiến thắng cộng thêm cho người chơi đủ điều kiện khi ván tự kết thúc
+   * (đi qua ô START).
+   *
+   * <p>Đọc từ {@code game.win-bonus-points}, override được bằng biến môi trường
+   * {@code WIN_BONUS_POINTS} lúc deploy — không cần build lại.
+   */
+  public final long winBonusPoints;
+
   public GameRulesConfig(
       @Value("${game.turn-roll-s:15}") long turnRollS,
       @Value("${game.answer-timeout-s:60}") long answerTimeoutS,
@@ -79,7 +88,8 @@ public class GameRulesConfig {
       @Value("${payment.ttl-minutes:15}") long paymentTtlMinutes,
       @Value("${game.win-min-laps:1}") int winMinLaps,
       @Value("${game.win-min-answers:12}") int winMinAnswers,
-      @Value("${vnpay.enabled:false}") boolean vnpayEnabled) {
+      @Value("${vnpay.enabled:false}") boolean vnpayEnabled,
+      @Value("${game.win-bonus-points:5}") long winBonusPoints) {
     this.turnRollS = turnRollS;
     this.answerTimeoutS = answerTimeoutS;
     this.awayAfterS = awayAfterS;
@@ -94,6 +104,7 @@ public class GameRulesConfig {
     this.winMinLaps = winMinLaps;
     this.winMinAnswers = winMinAnswers;
     this.vnpayEnabled = vnpayEnabled;
+    this.winBonusPoints = winBonusPoints;
   }
 
   /** Số tiền một đơn (VND) — dùng khi tạo đơn, không nhận từ client. */
@@ -119,6 +130,15 @@ public class GameRulesConfig {
   /** VNPay đang bật hay không — client dùng để ẩn/hiện nút mua báo cáo. */
   public boolean isVnpayEnabled() {
     return vnpayEnabled;
+  }
+
+  /**
+   * Điểm chiến thắng cộng thêm khi ván tự kết thúc vì người chơi đủ điều kiện.
+   *
+   * <p>Server tự cộng — client không được tự khai điểm.
+   */
+  public long getWinBonusPoints() {
+    return winBonusPoints;
   }
 
   public GameRulesSnapshot snapshot() {
