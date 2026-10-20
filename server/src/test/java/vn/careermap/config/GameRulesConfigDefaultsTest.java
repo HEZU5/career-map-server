@@ -46,6 +46,7 @@ class GameRulesConfigDefaultsTest {
       assertThat(rules.getPaymentTtlMinutes()).isEqualTo(15L);
       assertThat(rules.getWinMinLaps()).isEqualTo(1);
       assertThat(rules.getWinMinAnswers()).isEqualTo(12);
+      assertThat(rules.isVnpayEnabled()).isFalse();
     });
   }
 
@@ -59,6 +60,7 @@ class GameRulesConfigDefaultsTest {
       assertThat(rules.getPaymentTtlMinutes()).isEqualTo(15L);
       assertThat(rules.getWinMinLaps()).isEqualTo(1);
       assertThat(rules.getWinMinAnswers()).isEqualTo(12);
+      assertThat(rules.isVnpayEnabled()).isFalse();
     });
   }
 }

@@ -39,15 +39,15 @@ import vn.careermap.web.dto.WinnerRequest;
  */
 class GameFinishTest {
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false);
 
   /** Ngưỡng SIẾT hơn mặc định — dùng để chứng minh server đọc ngưỡng từ cấu hình. */
   private static final GameRulesConfig STRICT_RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 3, 30);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 3, 30, false);
 
   /** Ngưỡng NỚI hơn mặc định — biến môi trường có thể hạ ngưỡng lúc deploy. */
   private static final GameRulesConfig LOOSE_RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 4);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 4, false);
 
   /** key -> player, đóng vai "database" cho {@code resolvePlayer}. */
   private final Map<String, Player> byKey = new HashMap<>();

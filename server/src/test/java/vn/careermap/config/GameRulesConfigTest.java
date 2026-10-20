@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
  */
 class GameRulesConfigTest {
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false);
 
   @Test
   void paymentAmountLaNamTramKhong() {
@@ -35,6 +35,19 @@ class GameRulesConfigTest {
   }
 
   @Test
+  void vnpayMacDinhLaTat() {
+    assertThat(RULES.isVnpayEnabled()).isFalse();
+  }
+
+  @Test
+  void vnpayBatKhiDuocMoKhoa() {
+    GameRulesConfig rules =
+        new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true);
+
+    assertThat(rules.isVnpayEnabled()).isTrue();
+  }
+
+  @Test
   void snapshotChoClientCungBaoNamTruongThanhToan() {
     GameRulesSnapshot snapshot = RULES.snapshot();
 
@@ -42,6 +55,17 @@ class GameRulesConfigTest {
     assertThat(snapshot.paymentTtlMinutes()).isEqualTo(15L);
     assertThat(snapshot.winMinLaps()).isEqualTo(1);
     assertThat(snapshot.winMinAnswers()).isEqualTo(12);
+  }
+
+  @Test
+  void snapshotChoClientBietVnpayDangBatHayTat() {
+    // Client ẩN nút "Nhận báo cáo" khi VNPay chưa bật — phải biết qua
+    // GET /api/game/config, không hard-code bên client.
+    assertThat(RULES.snapshot().vnpayEnabled()).isFalse();
+
+    GameRulesConfig bat =
+        new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true);
+    assertThat(bat.snapshot().vnpayEnabled()).isTrue();
   }
 
   @Test

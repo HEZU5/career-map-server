@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import vn.careermap.config.GameRulesConfig;
 import vn.careermap.config.GameRulesSnapshot;
@@ -58,6 +59,19 @@ public class GameController {
   @PostMapping("/game/check-winner")
   public WinnerResponse checkWinner(@RequestBody WinnerRequest request) {
     return gameService.checkWinner(request);
+  }
+
+  /**
+   * Biến thể GET của {@code POST /game/check-winner} — cho client gọi khi mở
+   * màn kết quả để rẽ nhánh "đủ điều kiện / chưa đủ điều kiện".
+   *
+   * <p>Client không gửi body nên dùng query param. Cùng nguồn sự thật với
+   * {@code POST /game/check-winner} và {@code GameService.pickWinner}: đổi
+   * ngưỡng {@code game.win-min-*} thì cả hai cùng đổi.
+   */
+  @GetMapping("/game/check-winner")
+  public WinnerResponse checkWinnerByPlayerId(@RequestParam String playerId) {
+    return gameService.checkWinner(new WinnerRequest(playerId));
   }
 
   @GetMapping("/riasec/{category}/description")

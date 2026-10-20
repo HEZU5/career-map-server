@@ -30,7 +30,7 @@ public class VnpayConfig {
   private final String ipnUrl;
 
   public VnpayConfig(
-      @Value("${vnpay.enabled:}") boolean enabled,
+      @Value("${vnpay.enabled:false}") boolean enabled,
       @Value("${vnpay.tmn-code:}") String tmnCode,
       @Value("${vnpay.hash-secret:}") String hashSecret,
       @Value("${vnpay.return-url:}") String returnUrl,

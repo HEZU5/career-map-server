@@ -56,6 +56,15 @@ public class GameRulesConfig {
   /** Ngưỡng thắng: phải trả lời tối thiểu số câu này (24 ô RIASEC = 4 câu mỗi vòng). */
   public final int winMinAnswers;
 
+  /**
+   * VNPay đã được cấu hình và sẵn sàng nhận đơn chưa.
+   *
+   * <p>Đọc từ {@code vnpay.enabled}. Khi {@code false} thì client PHẢI ẩn nút
+   * "Nhận báo cáo" — bấm vào lúc đó chỉ nhận lỗi từ server, người chơi hiểu
+   * nhầm là app hỏng. Mặc định {@code false}: chưa cấu hình thì không mở bán.
+   */
+  public final boolean vnpayEnabled;
+
   public GameRulesConfig(
       @Value("${game.turn-roll-s:15}") long turnRollS,
       @Value("${game.answer-timeout-s:60}") long answerTimeoutS,
@@ -69,7 +78,8 @@ public class GameRulesConfig {
       @Value("${payment.amount-vnd:50000}") long paymentAmountVnd,
       @Value("${payment.ttl-minutes:15}") long paymentTtlMinutes,
       @Value("${game.win-min-laps:1}") int winMinLaps,
-      @Value("${game.win-min-answers:12}") int winMinAnswers) {
+      @Value("${game.win-min-answers:12}") int winMinAnswers,
+      @Value("${vnpay.enabled:false}") boolean vnpayEnabled) {
     this.turnRollS = turnRollS;
     this.answerTimeoutS = answerTimeoutS;
     this.awayAfterS = awayAfterS;
@@ -83,6 +93,7 @@ public class GameRulesConfig {
     this.paymentTtlMinutes = paymentTtlMinutes;
     this.winMinLaps = winMinLaps;
     this.winMinAnswers = winMinAnswers;
+    this.vnpayEnabled = vnpayEnabled;
   }
 
   /** Số tiền một đơn (VND) — dùng khi tạo đơn, không nhận từ client. */
@@ -105,6 +116,11 @@ public class GameRulesConfig {
     return winMinAnswers;
   }
 
+  /** VNPay đang bật hay không — client dùng để ẩn/hiện nút mua báo cáo. */
+  public boolean isVnpayEnabled() {
+    return vnpayEnabled;
+  }
+
   public GameRulesSnapshot snapshot() {
     return new GameRulesSnapshot(
         turnRollS,
@@ -119,6 +135,7 @@ public class GameRulesConfig {
         paymentAmountVnd,
         paymentTtlMinutes,
         winMinLaps,
-        winMinAnswers);
+        winMinAnswers,
+        vnpayEnabled);
   }
 }

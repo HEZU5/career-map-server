@@ -21,7 +21,7 @@ import vn.careermap.domain.TurnPhase;
  */
 class RoomLifecycleTest {
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false);
 
   private static Room waitingRoom(String ownerKey) {
     Room room = Room.create("H12345", "Chủ", false, ownerKey);

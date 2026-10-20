@@ -14,4 +14,5 @@ public record GameRulesSnapshot(
     long paymentAmountVnd,
     long paymentTtlMinutes,
     int winMinLaps,
-    int winMinAnswers) {}
+    int winMinAnswers,
+    boolean vnpayEnabled) {}
