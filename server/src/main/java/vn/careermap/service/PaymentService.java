@@ -109,8 +109,11 @@ public class PaymentService {
         player.getRoom() == null ? null : player.getRoom().getCode(),
         rules.getPaymentAmountVnd(),
         rules.getPaymentTtlMinutes());
-    if (player.getRoom() != null) {
-      order.setRiasecJson(toJson(player.getRoom().getRiasecSnapshot()));
+    // Chup diem RIASEC cua CHINH nguoi mua (khong phai tong cua ca phong), de bao
+    // cao Holland la cua rieng ho.
+    String riasecJson = toJson(player.getScores());
+    if (riasecJson != null && !riasecJson.isEmpty()) {
+      order.setRiasecJson(riasecJson);
     }
     orderRepository.save(order);
     return toResponse(order);
@@ -321,7 +324,21 @@ public class PaymentService {
     return null;
   }
 
-  private static String toJson(Map<String, Integer> snapshot) {
+  private static String toJson(java.util.List<vn.careermap.domain.Score> scores) {
+    if (scores == null || scores.isEmpty()) {
+      return null;
+    }
+    Map<String, Integer> snapshot = new LinkedHashMap<>();
+    for (vn.careermap.domain.RiasecCategory c : vn.careermap.domain.RiasecCategory.values()) {
+      snapshot.put(c.name(), 0);
+    }
+    for (vn.careermap.domain.Score s : scores) {
+      if (s.getCategory() == null) continue;
+      snapshot.merge(s.getCategory().name(), s.getPoints(), Integer::sum);
+    }
+    return toJson(snapshot);
+  }
+  private static String toJson(java.util.Map<String, Integer> snapshot) {
     if (snapshot == null || snapshot.isEmpty()) {
       return null;
     }
