@@ -74,8 +74,27 @@ public class PaymentService {
   /**
    * Tên tham số chứa chữ ký — giá trị của nó KHÔNG BAO GIỜ được ghi log (che
    * lại bằng {@code ***}).
+   *
+   * <p>So khớp KHÔNG phân biệt hoa thường: kẻ xấu gửi {@code vnp_securehash}
+   * cũng phải bị che — nếu chỉ che đúng tên thì chỉ cần đổi tên là lộ chữ
+   * ký hợp lệ.
    */
   private static final String SECURE_HASH_PARAM = "vnp_SecureHash";
+
+  /** Tên tham số chứa mã đơn — giá trị của nó cũng phải escape + cắt khi log. */
+  private static final String TXN_REF_PARAM = "vnp_TxnRef";
+
+  /**
+   * Hình dạng chữ ký VNPay: hex 64 ký tự (HMAC-SHA256) hoặc 128 ký tự
+   * (HMAC-SHA512).
+   *
+   * <p>Dùng làm lớp che CUỐI: kẻ xấu đổi TÊN tham số chữ ký HOÀN TOÀN (vd
+   * {@code vnp_h4sh}) thì không còn tên nào giống {@code vnp_SecureHash} để so
+   * khớp, nhưng giá trị vẫn là chữ ký hợp lệ của bộ tham số gốc ⇒ in ra là
+   * lộ chữ ký ⇒ kẻ xấu dò được {@code HashSecret} offline.
+   */
+  private static final java.util.regex.Pattern SIGNATURE_SHAPE =
+      java.util.regex.Pattern.compile("^(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$");
 
   /** Số ký tự tối đa cho một giá trị tham số khi ghi log (tránh log phình vô hạn). */
   private static final int LOG_PARAM_VALUE_MAX = 120;
@@ -315,7 +334,9 @@ public class PaymentService {
    *
    * <ul>
    *   <li>Giá trị {@code vnp_SecureHash} bị CHE ({@code ***}) — in ra nó là lộ
-   *       một chữ ký hợp lệ ⇒ kẻ xấu dò được HashSecret offline.</li>
+   *       một chữ ký hợp lệ ⇒ kẻ xấu dò được HashSecret offline. Che theo
+   *       TÊN (không phân biệt hoa thường) lẫn theo GIÁ TRỊ — xem
+   *       {@link #maskValueForLog}.</li>
    *   <li>Giá trị quá dài bị cắt còn {@value #LOG_PARAM_VALUE_MAX} ký tự để
    *       log không phình vô hạn.</li>
    * </ul>
@@ -326,13 +347,25 @@ public class PaymentService {
     }
     return params.entrySet().stream()
         .sorted(Map.Entry.comparingByKey())
-        .map(e -> e.getKey() + "=" + maskValueForLog(e.getKey(), e.getValue()))
+        .map(e -> e.getKey() + "=" + maskValueForLog(e.getKey(), e.getValue(), params))
         .collect(Collectors.joining(", "));
   }
 
-  /** Che giá trị chữ ký + cắt bớt giá trị quá dài trước khi ghi log. */
-  private static String maskValueForLog(String key, String value) {
-    if (SECURE_HASH_PARAM.equals(key)) {
+  /**
+   * Che giá trị chữ ký + escape + cắt bớt giá trị quá dài trước khi ghi log.
+   *
+   * <p><b>Mọi</b> giá trị tham số đi vào log đều phải qua hàm này — kể cả
+   * {@code vnp_TxnRef} nằm trong message của {@code log.warn}. Lý do: endpoint
+   * {@code /api/payments/ipn} là CÔNG KHAI, KHÔNG xác thực ⇒ mọi giá trị tham
+   * số đều do bất kỳ ai kiểm soát được ⇒ in thô là mời chèn DÒNG LOG GIẢ
+   * (log injection) vào log server.
+   *
+   * @param key tên tham số
+   * @param value giá trị tham số (có thể {@code null})
+   * @param params toàn bộ tham số nhận được (dùng để che theo GIÁ TRỊ)
+   */
+  private static String maskValueForLog(String key, String value, Map<String, String> params) {
+    if (isSecureHashKey(key) || isSecureHashValue(value, params)) {
       return "***";
     }
     String text = value == null ? "" : value;
@@ -345,6 +378,46 @@ public class PaymentService {
           + "...(cắt bớt " + (text.length() - LOG_PARAM_VALUE_MAX) + " ký tự)";
     }
     return text;
+  }
+
+  /**
+   * Tên tham số có phải tên chứa chữ ký không (KHÔNG phân biệt hoa thường).
+   *
+   * <p>Che theo tên là lớp RẺ nhất nhưng không đủ: kẻ xấu chỉ cần đổi tên
+   * tham số là lọt ⇒ phải che thêm theo giá trị.
+   */
+  private static boolean isSecureHashKey(String key) {
+    return key != null && SECURE_HASH_PARAM.equalsIgnoreCase(key);
+  }
+
+  /**
+   * Giá trị này có phải CHỮ KÝ (theo GIÁ TRỊ) không — bất kể tên tham số gọi
+   * nó là gì.
+   *
+   * <p>Hai lớp:
+   *
+   * <ol>
+   *   <li>Trùng giá trị chữ ký đang có trong bộ tham số (đặt dưới một tên
+   *       khác) — vd IPN có cả {@code vnp_SecureHash} lẫn {@code vnp_hash}
+   *       cùng một giá trị ⇒ cả hai đều phải bị che.</li>
+   *   <li>Hình dạng chữ ký VNPay (hex 64/128) — bắt được trường hợp kẻ xấu
+   *       đổi tên tham số HOÀN TOÀN: không còn tên nào để so khớp, nhưng giá
+   *       trị vẫn là chữ ký hợp lệ của bộ tham số gốc ⇒ in ra là lộ chữ ký.</li>
+   * </ol>
+   */
+  private static boolean isSecureHashValue(String value, Map<String, String> params) {
+    if (value == null || value.isEmpty()) {
+      return false;
+    }
+    if (params != null) {
+      for (Map.Entry<String, String> e : params.entrySet()) {
+        if (isSecureHashKey(e.getKey())
+            && value.equalsIgnoreCase(e.getValue() == null ? "" : e.getValue())) {
+          return true;
+        }
+      }
+    }
+    return SIGNATURE_SHAPE.matcher(value).matches();
   }
 
   /**
@@ -475,9 +548,13 @@ public class PaymentService {
         // chuoi bam => rui ro "sai chu ky" tang manh).
         log.warn(
             "IPN VNPay SAI CHỮ KÝ (RspCode=97) — đơn '{}' sẽ không bao giờ sang PAID. "
-                + "Tham số nhận được (chữ ký tính trên đúng các tham số này, BỎ QUA "
+                + "Tham số nhận được (chữ ký tính trên các tham số CÓ GIÁ TRỊ, BỎ QUA "
                 + "vnp_SecureHash và vnp_SecureHashType): {}",
-            params == null ? "" : params.get("vnp_TxnRef"),
+            // Mã đơn cũng phải qua hàm che/escape/cắt: endpoint IPN công khai,
+            // không xác thực ⇒ vnp_TxnRef do bất kỳ ai kiểm soát được ⇒ in THÔ
+            // là mời chèn dòng log giả (log injection).
+            maskValueForLog(
+                TXN_REF_PARAM, params == null ? null : params.get(TXN_REF_PARAM), params),
             describeParams(params));
         return "{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}";
       }

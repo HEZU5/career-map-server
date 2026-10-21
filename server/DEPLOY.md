@@ -94,6 +94,29 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
 > version/order-type thì báo thiếu biến; 2.1.0 thì không gửi `vnp_SecureHashType`),
 > nhưng vẫn phải đặt đủ bộ biến ở Render.
 
+> **CẦN QUAY LẠI API CŨ (`pay_web`)? PHẢI đặt ĐỦ cả 4 biến sau** (giá trị
+> rỗng là RỖNG THẬT — KHÔNG phải "không đặt"):
+>
+> ```
+> VNPAY_COMMAND=pay_web
+> VNPAY_VERSION=
+> VNPAY_ORDER_TYPE=
+> VNPAY_HASH_ALGORITHM=HmacSHA256
+> ```
+>
+> - `VNPAY_VERSION=` + `VNPAY_ORDER_TYPE=` phải để **RỖNG**: server chỉ tự điền
+>   mặc định `2.1.0` / `other` khi đang ở API 2.1.0.
+> - `VNPAY_HASH_ALGORITHM=HmacSHA256` ghim TAY (không để trống) để chắc chắn
+>   ký đúng thuật toán của API cũ.
+> - **KHÔNG được CHỈ set `VNPAY_COMMAND=pay_web`**: `vnpay.version` mặc định là
+>   `2.1.0` ⇒ `isApi21()` vẫn `true` (nó nhận ra 2.1.0 qua `vnp_Version`) ⇒
+>   server vẫn ký SHA512 và vẫn gửi `vnp_Version`/`vnp_OrderType` ⇒ gateway
+>   từ chối đơn.
+> - Ngoài ra phải trỏ `VNPAY_BASE_URL` về endpoint cũ
+>   (`https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm`) — nhưng
+>   endpoint đó **đã 404** ⇒ API cũ coi như đã chết, chỉ dùng để rollback
+>   tạm thời.
+
 ### 2.4. CORS (tuỳ chọn)
 
 | Key | Mặc định |
@@ -121,10 +144,28 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
    IPN (`IPN xử lý thất bại...`) khi VNPay gọi.
 5. Nếu đơn **không** chuyển PAID sau khi thanh toán: tìm trong log dòng
    `IPN VNPay SAI CHỮ KÝ (RspCode=97)` — dòng đó in ra **toàn bộ tham số IPN
-   nhận được** (giá trị `vnp_SecureHash` được che `***`) để dựng lại chuỗi băm
-   và so với chuỗi server đã gửi trong payUrl. Lưu ý: `RspCode=97` ⇒ **VNPay
-   không retry** ⇒ đơn sẽ **không bao giờ** sang PAID ⇒ hết 15 phút thành
-   EXPIRED dù tiền đã vào ⇒ phải xử lý tay.
+   nhận được** (giá trị chữ ký được che `***`) để dựng lại chuỗi băm và so với
+   chuỗi server đã gửi trong payUrl. Lưu ý: `RspCode=97` ⇒ **VNPay không
+   retry** ⇒ đơn sẽ **không bao giờ** sang PAID ⇒ hết 15 phút thành EXPIRED
+   dù tiền đã vào ⇒ phải xử lý tay.
+
+   **Cách dựng lại chuỗi băm từ dòng log đó** (đúng thứ tự
+   `VnpaySignatureService` dùng khi băm):
+
+   1. Lấy các tham số in trong log, **bỏ `vnp_SecureHash` và
+      `vnp_SecureHashType`**.
+   2. **BỎ QUA tham số có giá trị RỖNG.** Log in ra dạng `key=` nhưng tham số
+      rỗng **KHÔNG** được tính vào chuỗi băm. (Nói cách khác: chữ ký tính trên
+      các tham số **CÓ GIÁ TRỊ**, không phải "đúng mọi tham số in ra".)
+   3. Sắp xếp key theo alphabet (tăng dần).
+   4. **URL-ENCODE LẠI cả key và value** (UTF-8). Log in giá trị **đã giải mã**
+      (Spring decode `@RequestParam`), còn chuỗi băm dùng bản **đã encode**
+      (ví dụ `Bao cao Holland` → `Bao+cao+Holland`, `&` → `%26`,
+      `+` → `%2B`). Bỏ bước này thì chữ ký dựng ra LUÔN lệch ⇒ tưởng gateway
+      sai chữ ký trong khi thực ra là do cách dựng.
+   5. Nối `key=value` bằng `&`, rồi HMAC bằng `VNPAY_HASH_SECRET` theo
+      `vnpay.hash-algorithm` (2.1.0 ⇒ HmacSHA512 ⇒ 128 hex; API cũ ⇒
+      HmacSHA256 ⇒ 64 hex) và so với `vnp_SecureHash` nhận được.
 6. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
    dựa trên `RspCode` TRONG BODY (không phải HTTP status):
    - `00`, `02` ⇒ kết thúc luồng;

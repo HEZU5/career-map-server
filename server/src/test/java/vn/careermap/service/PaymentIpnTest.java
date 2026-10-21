@@ -148,6 +148,138 @@ class PaymentIpnTest {
     assertThat(message).contains("\\n");
   }
 
+  /**
+   * Log chẩn đoán IPN KHÔNG được để client chèn DÒNG LOG GIẢ.
+   *
+   * <p><b>Vì sao quan trọng:</b> {@code /api/payments/ipn} là endpoint CÔNG
+   * KHAI, KHÔNG xác thực ⇒ ai cũng gọi được. Nếu một giá trị tham số (vd
+   * {@code vnp_TxnRef}) được in THÔ vào message log thì client gửi
+   * {@code vnp_TxnRef=%0A[INFO] ...} là chèn được dòng log giả vào log
+   * Render ⇒ log bị giả mạo / đánh cắp.
+   *
+   * <p>Mọi giá trị tham số phải đi qua CÙNG một hàm escape + cắt (escape
+   * {@code \r}/{@code \n} + cắt 120 ký tự) — giống hệt các tham số khác.
+   */
+  @Test
+  void ipnSaiChuKyKhongChenDongLogGia() {
+    Map<String, String> params =
+        signedParams("abc\r\n[INFO] dong log gia do client chen", "00");
+    params.put("vnp_SecureHash", "chu-ky-sai");
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    // KHÔNG có newline thô ⇒ client không tạo được dòng log giả.
+    assertThat(message).doesNotContain("\n");
+    assertThat(message).doesNotContain("\r");
+    // Giá trị được escape y hệt các tham số khác (không phải bản thô).
+    assertThat(message).contains("abc\\r\\n[INFO] dong log gia do client chen");
+  }
+
+  /**
+   * Giá trị {@code vnp_TxnRef} quá dài cũng phải bị CẮT (giống các tham số
+   * khác) — không được đẩy nguyên khối lớn vào log.
+   */
+  @Test
+  void ipnSaiChuKyCatNganGiaTriDaiCuaTxnRef() {
+    Map<String, String> params = signedParams("x".repeat(300), "00");
+    params.put("vnp_SecureHash", "chu-ky-sai");
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain("x".repeat(300));
+    assertThat(message).contains("...(cắt bớt");
+  }
+
+  /**
+   * Kẻ xấu replay một IPN THẬT (chữ ký hợp lệ) nhưng ĐỔI TÊN tham số chữ
+   * ký ({@code vnp_SecureHash} → {@code vnp_securehash}) ⇒ giá trị chữ ký
+   * thật KHÔNG được in ra log.
+   *
+   * <p><b>Vì sao quan trọng:</b> in ra chữ ký hợp lệ là lộ một chữ ký đúng
+   * của VNPay ⇒ kẻ xấu dò được {@code HashSecret} offline (dictionary
+   * attack) rồi tự ký đơn giả. Che theo đúng tên {@code vnp_SecureHash} là
+   * không đủ — phải che theo TÊN không phân biệt hoa thường và theo GIÁ TRỊ.
+   */
+  @Test
+  void ipnSaiChuKyKhongLoChuKyKhiDoiTenKey() {
+    Map<String, String> genuine = signedParams("order-rename", "00");
+    String validHash = genuine.get("vnp_SecureHash");
+
+    Map<String, String> params = new LinkedHashMap<>(genuine);
+    params.remove("vnp_SecureHash");
+    params.put("vnp_securehash", validHash);
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain(validHash);
+    assertThat(message).contains("vnp_securehash=***");
+  }
+
+  /**
+   * Kẻ xấu đổi tên tham số chữ ký HOÀN TOÀN (vd {@code vnp_h4sh}) ⇒ không
+   * còn tên nào giống {@code vnp_SecureHash} để so khớp, nhưng giá trị vẫn
+   * là chữ ký hợp lệ của bộ tham số gốc ⇒ cũng KHÔNG được lộ.
+   */
+  @Test
+  void ipnSaiChuKyKhongLoChuKyKhiDoiTenKeyHoanToan() {
+    Map<String, String> genuine = signedParams("order-rename-2", "00");
+    String validHash = genuine.get("vnp_SecureHash");
+
+    Map<String, String> params = new LinkedHashMap<>(genuine);
+    params.remove("vnp_SecureHash");
+    params.put("vnp_h4sh", validHash);
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain(validHash);
+    assertThat(message).contains("vnp_h4sh=***");
+  }
+
+  /**
+   * Bản SAO của chữ ký đặt dưới tên tham số khác cũng phải bị che — không
+   * được lộ chữ ký chỉ vì nó không nằm ở ô {@code vnp_SecureHash}.
+   */
+  @Test
+  void ipnSaiChuKyKhongLoChuKyDoiDuoiTenKhac() {
+    Map<String, String> genuine = signedParams("order-copy", "00");
+    String validHash = genuine.get("vnp_SecureHash");
+
+    Map<String, String> params = new LinkedHashMap<>(genuine);
+    params.put("vnp_hash", validHash);
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain(validHash);
+  }
+
+  /**
+ * Che theo TÊN tham số KHÔNG phân biệt hoa thường — kể cả khi giá trị không
+ * đúng hình dạng chữ ký VNPay (hex 64/128) thì tên đổi vẫn phải bị che.
+ */
+  @Test
+  void ipnSaiChuKyCheTheoTenKhongPhanBietHoaThuong() {
+    Map<String, String> params = signedParams("order-case", "00");
+    params.remove("vnp_SecureHash");
+    params.put("vnp_SECUREHASH", "chu-ky-khong-co-hinh-dang-hex");
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain("chu-ky-khong-co-hinh-dang-hex");
+    assertThat(message).contains("vnp_SECUREHASH=***");
+  }
+
   /** Bắt log WARN của {@link PaymentService} trong lúc chạy khối lệnh. */
   private static List<ILoggingEvent> captureWarns(Runnable action) {
     Logger logger = (Logger) LoggerFactory.getLogger(PaymentService.class);
