@@ -150,6 +150,21 @@ public class Room {
   @Column(name = "turn_skipped", nullable = false, columnDefinition = "boolean not null default false")
   private boolean turnSkipped;
 
+  /**
+   * Mã lá bài (Cơ hội / Thử thách) mà SERVER đã rút cho lượt hiện tại.
+   *
+   * <p>Null khi lượt hiện tại KHÔNG phải lượt rút thẻ: ô RIASEC, ô ⭐, ô
+   * START, hoặc lượt đã đóng. Khi rơi vào ô CƠ HỘI / THỬ THÁCH thì server tự
+   * rút lá và ghi vào đây — đây là NGUỒN SỰ THẬT về "người chơi rút được lá
+   * nào", nên client KHÔNG được tự khai {@code cardId} (xem
+   * {@code GameService.applyBonusEffect}).
+   *
+   * <p>Server tự xoá trường này mỗi khi lượt đóng (trả lời xong, hết giờ,
+   * đóng ván) nên lá cũ không bao giờ bị dùng lại ở lượt sau.
+   */
+  @Column(name = "pending_card_id", length = 32)
+  private String pendingCardId;
+
   /** true nếu lần tung gần nhất do hết giờ tự động (hiện pill "tự động tung"). */
   @Column(name = "last_roll_auto", nullable = false, columnDefinition = "boolean not null default false")
   private boolean lastRollAuto;
@@ -605,6 +620,15 @@ public class Room {
 
   public boolean isTurnSkipped() {
     return turnSkipped;
+  }
+
+  /** Lá bài server đã rút cho lượt hiện tại; null nếu lượt này không rút thẻ. */
+  public String getPendingCardId() {
+    return pendingCardId;
+  }
+
+  public void setPendingCardId(String pendingCardId) {
+    this.pendingCardId = pendingCardId;
   }
 
   public boolean isLastRollAuto() {

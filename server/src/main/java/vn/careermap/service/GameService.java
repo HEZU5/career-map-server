@@ -119,9 +119,18 @@ public class GameService {
           roll.auto(),
           room.getTurnId(),
           true,
-          room.getWinnerKey());
+          room.getWinnerKey(),
+          room.getPendingCardId());
     }
-    return new DiceResponse(roll.value(), roll.position(), roll.moved(), roll.auto(), room.getTurnId());
+    return new DiceResponse(
+        roll.value(),
+        roll.position(),
+        roll.moved(),
+        roll.auto(),
+        room.getTurnId(),
+        false,
+        null,
+        room.getPendingCardId());
   }
 
   /**
@@ -168,7 +177,7 @@ public class GameService {
     // Không có phòng để broadcast ⇒ trạng thái kết thúc truyền qua response.
     if (isEligibleToWin(player)) {
       awardWinBonus(player);
-      return new DiceResponse(value, next, true, false, 0, true, player.getPlayerKey());
+      return new DiceResponse(value, next, true, false, 0, true, player.getPlayerKey(), null);
     }
     return new DiceResponse(value, next, true, false, 0);
   }
@@ -207,11 +216,12 @@ public class GameService {
     if (points > 0) {
       player.scoreOf(targetCategory).addPoints(points);
     }
-    // Điểm chiến thắng: server CHỈ nhận tối đa số điểm mà chính server quyết
-    // định (bảng lá / luật ô ⭐). Client khai nhiều hơn bị cắt ⇒ hết chỗ tự
-    // khai điểm. Xem {@link #winPointsCap(Player, AnswerRequest)}.
-    int winPoints = request.winPoints() != null ? request.winPoints() : 0;
-    winPoints = Math.max(0, Math.min(winPoints, winPointsCap(player, request)));
+    // Điểm chiến thắng: server TỰ quyết, KHÔNG đọc `winPoints` của client.
+    // Trước đây trần điểm lấy từ `questionId` do CLIENT gửi ⇒ client tự
+    // chọn được nguồn của trần (khai lá 3 điểm ở bất kỳ ô nào). Đường cũ chỉ
+    // còn để tương thích cho tới khi client chuyển sang /game/bonus-effect.
+    // Xem {@link #serverWinPoints(Room, Player)}.
+    int winPoints = serverWinPoints(room, player);
     if (winPoints > 0) {
       player.addWinPoints(winPoints);
     }
@@ -224,28 +234,29 @@ public class GameService {
   }
 
   /**
-   * Trần số Điểm Chiến thắng mà server chấp nhận trên đường CŨ {@code
-   * /game/answer}.
+   * Số Điểm Chiến thắng mà server TỰ quyết cho lượt trả lời.
    *
-   * <p>Đường cũ vẫn phải còn (client cũ vẫn gửi {@code winPoints}, và nút "không
-   * hoàn thành" gửi {@code winPoints: 0} — phải giữ nguyên 0), nên không thể bỏ
-   * hẳn tham số của client ngay lúc này. Thay vào đó server chỉ nhận TỐI ĐA số
-   * điểm mà bảng lá / luật bàn quyết định:
+   * <p>KHÔNG đọc {@code request.winPoints()} — client không còn chỗ để tự
+   * quyết số điểm (kể cả "bỏ qua thẻ" gửi 0: Task 4 sẽ bỏ nút đó).
+   *
+   * <p>Trước đây trần điểm lấy từ {@code questionId} do CLIENT gửi ⇒ client
+   * tự chọn nguồn của trần: khai lá 3 điểm ở bất kỳ ô nào, kể cả ô RIASEC
+   * vốn theo luật là 0 điểm. Nay:
    *
    * <ul>
-   *   <li>Lá bài (client gửi {@code questionId} = mã lá có dấu) ⇒ lấy trong
-   *       {@link CardEffectRegistry}.
+   *   <li>Lượt rút thẻ ⇒ điểm của LÁ SERVER ĐÃ RÚT ({@code
+   *       Room#getPendingCardId()}), không phải lá client khai.
    *   <li>Đứng trên ô ⭐ ⇒ 1 điểm theo luật bàn.
    *   <li>Còn lại (câu hỏi RIASEC) ⇒ 0.
    * </ul>
-   *
-   * <p>Hiệu ứng THẬT của lá thì chỉ đường mới {@code /game/bonus-effect} áp —
-   * đường cũ chỉ cộng điểm.
    */
-  private int winPointsCap(Player player, AnswerRequest request) {
-    CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(request.questionId());
-    if (spec != null) {
-      return (int) Math.min(spec.winPoints(), Integer.MAX_VALUE);
+  private int serverWinPoints(Room room, Player player) {
+    String pendingCardId = room.getPendingCardId();
+    if (pendingCardId != null) {
+      CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(pendingCardId);
+      if (spec != null) {
+        return (int) Math.min(spec.awardWinPoints(), Integer.MAX_VALUE);
+      }
     }
     if (TurnCoordinator.pathTile(player.getCurrentPosition()) == TileType.STAR) {
       return 1;
@@ -257,6 +268,7 @@ public class GameService {
   void closeAnswerTurn(Room room) {
     room.setPendingAnswer(false);
     room.setLastDice(null);
+    room.setPendingCardId(null);
     room.clearTurn();
     room.advanceTurn();
     turns.startNextTurn(room, Instant.now());
@@ -267,13 +279,22 @@ public class GameService {
   /**
    * Áp hiệu ứng của lá Cơ hội / Thử thách — SERVER là nguồn sự thật.
    *
-   * <p>Trước đây client tự khai {@code winPoints} rồi gửi lên, server tin theo
-   * ⇒ ai cũng tự khai điểm tuỳ ý. Nay request KHÔNG có field điểm: server tự
-   * tra {@link CardEffectRegistry} theo {@code cardId}, tự tính điểm và tự áp
-   * hiệu ứng thật (tiến thêm ô, chơi thêm lượt, cộng cho cả bàn...).
+   * <p><b>CHẶN Ở CỬA (không dùng điều kiện).</b> Trước đây các trạng thái
+   * "không ở phòng đang chơi" chỉ bị BỎ QUA ⇒ người chơi gọi endpoint này
+   * liên tục ở ván một người / phòng đã kết thúc là cộng điểm vô hạn. Nay:
    *
-   * <p>Chỉ người đang ở lượt trả lời mới được rút lá: lượt đã đóng thì gọi lại
-   * bị chặn ⇒ không farm được điểm bằng cách spam endpoint này.
+   * <ul>
+   *   <li>Không có phòng / phòng chưa bắt đầu / phòng đã kết thúc ⇒ <b>403</b>.
+   *   <li>Không phải lượt của mình, hoặc lượt không ở pha chờ trả lời ⇒
+   *       <b>409</b> (tái dùng {@link NotYourTurnException} / {@link
+   *       TurnBusyException} y hệt {@link #answer(AnswerRequest)}).
+   * </ul>
+   *
+   * <p><b>LÁ DO SERVER RÚT.</b> Trước đây client tự rút lá ở máy rồi tự khai
+   * {@code cardId} lên ⇒ người chơi tự chọn lá đẹp nhất (MOVE_3, EXTRA_ROLL
+   * miễn phí). Nay server tự rút lá khi người chơi rơi vào ô thẻ và lưu mã lá
+   * vào phòng ({@link Room#getPendingCardId()}). Client gửi {@code cardId} để
+   * đối chiếu thì LỆCH ⇒ 400; không gửi ⇒ server dùng lá đã cấp.
    *
    * <p>Lá lạ → 400. Lựa chọn không hợp lệ với lá đó → 400. Người được chọn
    * không ở trong phòng (hoặc đã rời phòng) → 403.
@@ -281,19 +302,15 @@ public class GameService {
   @Transactional
   public BonusEffectResponse applyBonusEffect(BonusEffectRequest request) {
     Player player = requirePlayer(request.playerId());
-    CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(request.cardId());
+    Room room = requirePlayableRoom(player);
+    requireAnswerTurn(room, player);
+    String cardId = resolveDrawnCardId(room, request.cardId());
+    CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(cardId);
     if (spec == null) {
-      throw new ResponseStatusException(
-          HttpStatus.BAD_REQUEST, "Lá bài không hợp lệ: " + request.cardId());
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Lá bài không hợp lệ: " + cardId);
     }
     String choice = normalize(request.choice());
     requireValidChoice(spec, choice);
-
-    Room room = player.getRoom();
-    boolean inRoom = room != null && room.isActive() && !room.isFinished();
-    if (inRoom) {
-      requireAnswerTurn(room, player);
-    }
 
     List<String> awarded = new ArrayList<>();
     long winPoints = 0;
@@ -303,66 +320,69 @@ public class GameService {
 
     // Rút lá = đã trả lời 1 câu ở ô đích: đếm vào `totalAnswered` như đường cũ
     // (`/game/answer`) để ngưỡng thắng (số câu đã trả lời) không bị nặng hơn.
-    player.incrementTotalAnswered();
+    // LÁ DI CHUYỂN thì KHÔNG cộng: người chơi không trả lời câu nào, chỉ đi
+    // thêm vài ô ⇒ ngưỡng thắng phải đếm "câu đã trả lời", không phải "lá đã
+    // rút".
+    if (!isMoveEffect(spec, choice)) {
+      player.incrementTotalAnswered();
+    }
 
     switch (spec.effect()) {
       case NONE -> {
         winPoints = award(player, spec.winPoints());
         awarded.add(player.getPlayerKey());
-        closeTurn(room, inRoom);
+        closeTurn(room);
         message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng.";
       }
       case EXTRA_ROLL -> {
         winPoints = award(player, spec.winPoints());
         awarded.add(player.getPlayerKey());
         // Lượt MỚI cho chính người này (được tung tiếp ngay) — không chuyển lượt.
-        reopenRollTurn(room, player, inRoom);
+        reopenRollTurn(room, player);
         message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng và được chơi thêm một lượt ngay!";
       }
       case MOVE_2, MOVE_3 -> {
         int steps = spec.effect() == BonusEffect.MOVE_2 ? 2 : 3;
-        MoveResult move = moveForward(player, room, steps, inRoom);
+        MoveResult move = moveForward(player, room, steps);
         from = move.from();
         to = move.to();
         message = move.message();
       }
       case PICK_PLAYER_PLUS1 -> {
-        Player target = requireTargetInRoom(room, request.targetPlayerKey(), inRoom);
+        Player target = requireTargetInRoom(room, request.targetPlayerKey());
         winPoints = award(player, spec.winPoints());
         awarded.add(player.getPlayerKey());
         if (!target.getPlayerKey().equals(player.getPlayerKey())) {
           award(target, spec.winPoints());
           awarded.add(target.getPlayerKey());
         }
-        closeTurn(room, inRoom);
+        closeTurn(room);
         message =
             "Bạn và người bạn đồng hành cùng nhận +" + spec.winPoints() + " Điểm Chiến thắng.";
       }
       case ALL_PLAYERS_PLUS1 -> {
         winPoints = award(player, spec.winPoints());
         awarded.add(player.getPlayerKey());
-        if (inRoom) {
-          for (Player other : room.getPlayers()) {
-            if (other.isLeft() || other.getPlayerKey().equals(player.getPlayerKey())) {
-              continue;
-            }
-            award(other, spec.winPoints());
-            awarded.add(other.getPlayerKey());
+        for (Player other : room.getPlayers()) {
+          if (other.isLeft() || other.getPlayerKey().equals(player.getPlayerKey())) {
+            continue;
           }
+          award(other, spec.winPoints());
+          awarded.add(other.getPlayerKey());
         }
-        closeTurn(room, inRoom);
+        closeTurn(room);
         message = "Tất cả người chơi cùng nhận +" + spec.winPoints() + " Điểm Chiến thắng.";
       }
       case PLUS3_OR_MOVE_2 -> {
         if (CardEffectRegistry.CHOICE_MOVE_2.equals(choice)) {
-          MoveResult move = moveForward(player, room, 2, inRoom);
+          MoveResult move = moveForward(player, room, 2);
           from = move.from();
           to = move.to();
           message = move.message();
         } else {
           winPoints = award(player, spec.winPoints());
           awarded.add(player.getPlayerKey());
-          closeTurn(room, inRoom);
+          closeTurn(room);
           message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng.";
         }
       }
@@ -373,14 +393,67 @@ public class GameService {
 
     // Đi qua ô START BẰNG HIỆU ỨNG cũng phải được xét thắng — cùng đường với
     // lúc tung xúc xắc (xem {@link #maybeAutoFinish}).
-    if (inRoom && to != null) {
+    if (to != null) {
       maybeAutoFinish(room, player, true);
     }
-    if (inRoom && !room.isFinished()) {
+    if (!room.isFinished()) {
       broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
     }
     return new BonusEffectResponse(
         spec.effect().name(), winPoints, from, to, List.copyOf(awarded), message);
+  }
+
+  /**
+   * Phải có phòng ĐANG CHƠI thì mới được rút lá.
+   *
+   * <p>Chặn ở cửa, không dùng điều kiện: nếu chỉ "bỏ qua" các trạng thái
+   * này thì endpoint vẫn cộng điểm cho người chơi đang không ở ván.
+   */
+  private Room requirePlayableRoom(Player player) {
+    Room room = player.getRoom();
+    if (room == null) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Không có phòng đang chơi.");
+    }
+    if (!room.isActive()) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ván chưa bắt đầu.");
+    }
+    if (room.isFinished()) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ván đã kết thúc.");
+    }
+    return room;
+  }
+
+  /**
+   * Lá để áp hiệu ứng = LÁ SERVER ĐÃ RÚT cho lượt này.
+   *
+   * <p>Client có thể gửi {@code cardId} để đối chiếu — lệch với lá đã rút thì
+   * 400 (đây là lỗ hổng "client tự chọn lá đẹp nhất" của bản cũ). Không gửi
+   * thì server dùng lá đã cấp.
+   *
+   * <p>Lượt không phải lượt rút thẻ (ô RIASEC / ô ⭐) ⇒ không có lá để áp ⇒
+   * 409.
+   */
+  private String resolveDrawnCardId(Room room, String requestedCardId) {
+    String drawn = room.getPendingCardId();
+    if (drawn == null || drawn.isBlank()) {
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Lượt này không phải lượt rút thẻ nên không có lá để áp.");
+    }
+    String requested = normalize(requestedCardId);
+    if (requested != null && !requested.equals(drawn)) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Lá bài không khớp với lá đã được cấp cho lượt này.");
+    }
+    return drawn;
+  }
+
+  /** Lá này có làm người chơi DỜI QUÂN không (MOVE_2 / MOVE_3 / CƠ HỘI 10 chọn MOVE_2)? */
+  private boolean isMoveEffect(CardEffectRegistry.CardEffectSpec spec, String choice) {
+    return switch (spec.effect()) {
+      case MOVE_2, MOVE_3 -> true;
+      case PLUS3_OR_MOVE_2 -> CardEffectRegistry.CHOICE_MOVE_2.equals(choice);
+      default -> false;
+    };
   }
 
   /**
@@ -441,10 +514,7 @@ public class GameService {
   }
 
   /** Đóng lượt trả lời và chuyển lượt cho người kế tiếp. */
-  private void closeTurn(Room room, boolean inRoom) {
-    if (!inRoom) {
-      return;
-    }
+  private void closeTurn(Room room) {
     closeAnswerTurn(room);
   }
 
@@ -454,12 +524,10 @@ public class GameService {
    * <p>Không chuyển lượt: người đó được tung tiếp ngay, còn những người khác
    * chờ.
    */
-  private void reopenRollTurn(Room room, Player player, boolean inRoom) {
-    if (!inRoom) {
-      return;
-    }
+  private void reopenRollTurn(Room room, Player player) {
     room.setPendingAnswer(false);
     room.setLastDice(null);
+    room.setPendingCardId(null);
     room.clearTurn();
     room.beginTurn(
         player, TurnPhase.WAITING_ROLL, Instant.now().plusSeconds(rules.turnRollS), false);
@@ -471,13 +539,13 @@ public class GameService {
    * <p>Người đã rời phòng vẫn nằm trong {@code room.getPlayers()} nên phải loại
    * riêng, nếu không ai cũng "chia" điểm cho người đã bỏ đi.
    */
-  private Player requireTargetInRoom(Room room, String targetKey, boolean inRoom) {
+  private Player requireTargetInRoom(Room room, String targetKey) {
     String key = targetKey == null ? "" : targetKey.trim();
     if (key.isEmpty()) {
       throw new ResponseStatusException(
           HttpStatus.BAD_REQUEST, "Chưa chọn người chơi cho lá bài này.");
     }
-    Player target = inRoom ? room.findPlayer(key) : null;
+    Player target = room.findPlayer(key);
     if (target == null || target.isLeft()) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Người chơi được chọn không ở trong phòng.");
@@ -496,7 +564,7 @@ public class GameService {
    * <p>Đích là ô thẻ ⇒ mở lượt trả lời cho chính người này; không phải ⇒ đóng
    * lượt và chuyển lượt.
    */
-  private MoveResult moveForward(Player player, Room room, int steps, boolean inRoom) {
+  private MoveResult moveForward(Player player, Room room, int steps) {
     int from = player.getCurrentPosition();
     int raw = from - steps;
     int to = Math.floorMod(raw, TurnCoordinator.pathSize());
@@ -504,18 +572,19 @@ public class GameService {
     if (raw < 0) {
       player.addCompletedLaps(1);
     }
-    boolean needsAnswer = inRoom && turns.needsAnswerAt(to);
-    if (inRoom) {
-      if (needsAnswer) {
-        room.setPendingAnswer(true);
-        room.beginTurn(
-            player,
-            TurnPhase.WAITING_ANSWER,
-            Instant.now().plusSeconds(rules.answerTimeoutS),
-            false);
-      } else {
-        closeAnswerTurn(room);
-      }
+    boolean needsAnswer = turns.needsAnswerAt(to);
+    if (needsAnswer) {
+      room.setPendingAnswer(true);
+      // Rơi vào ô THẻ ⇒ server rút lá MỚI cho lượt này (xem
+      // {@link TurnCoordinator#rollAndMove} — cùng quy tắc).
+      room.setPendingCardId(cardEffects.drawCardFor(TurnCoordinator.pathTile(to)));
+      room.beginTurn(
+          player,
+          TurnPhase.WAITING_ANSWER,
+          Instant.now().plusSeconds(rules.answerTimeoutS),
+          false);
+    } else {
+      closeAnswerTurn(room);
     }
     String message =
         needsAnswer
@@ -616,6 +685,7 @@ public class GameService {
     room.captureRiasecSnapshot();
     room.clearTurn();
     room.setPendingAnswer(false);
+    room.setPendingCardId(null);
     log.info("[FINISH] phong={} nguoi-thang={}", room.getCode(), room.getWinnerKey());
     GameSnapshot snapshot = snapshotBuilder.build(room);
     broadcaster.gameFinished(room.getCode(), snapshot, room.getWinnerKey());

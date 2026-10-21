@@ -61,6 +61,15 @@ public class GameController {
    * điểm và tự áp hiệu ứng thật (tiến thêm ô, chơi thêm lượt, cộng cho cả
    * bàn...).
    *
+   * <p><b>Lá do SERVER rút</b> ngay lúc người chơi rơi vào ô thẻ (xem
+   * {@code DiceResponse.cardId} và {@code GameSnapshot.pendingCardId}).
+   * {@code cardId} trong request chỉ để ĐỐI CHIẾU: gửi lá khác lá đã được cấp
+   * ⇒ 400; không gửi ⇒ server dùng lá đã cấp.
+   *
+   * <p>Chỉ người đang ở lượt trả lời trong phòng ĐANG CHƠI mới gọi được:
+   * không có phòng / phòng chưa bắt đầu / phòng đã kết thúc ⇒ 403; không phải
+   * lượt của mình ⇒ 409.
+   *
    * <p>Đây là đường DUY NHẤT để nhận điểm từ lá bài: đường {@code /game/answer}
    * cũ vẫn còn để dùng cho câu hỏi RIASEC.
    */

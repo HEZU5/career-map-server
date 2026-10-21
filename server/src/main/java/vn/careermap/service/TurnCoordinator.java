@@ -56,10 +56,13 @@ public class TurnCoordinator {
   private final GameRulesConfig rules;
   private final SecureRandom dice = new SecureRandom();
   private final OfflinePolicyHandler policy;
+  private final CardEffectRegistry cardEffects;
 
-  public TurnCoordinator(GameRulesConfig rules, OfflinePolicyHandler policy) {
+  public TurnCoordinator(
+      GameRulesConfig rules, OfflinePolicyHandler policy, CardEffectRegistry cardEffects) {
     this.rules = rules;
     this.policy = policy;
+    this.cardEffects = cardEffects;
   }
 
   // ── Tung ────────────────────────────────────────────────────────────────────
@@ -115,6 +118,11 @@ public class TurnCoordinator {
 
     boolean needsAnswer = needsAnswerAt(next);
     room.setPendingAnswer(needsAnswer);
+    // Rơi vào ô THẺ ⇒ SERVER tự rút lá (CƠ HỘI hay THỬ THÁCH tuỳ loại ô) và
+    // ghi mã lá vào phòng. Trước đây client tự rút ở máy rồi tự khai `cardId`
+    // lên ⇒ người chơi tự chọn được lá đẹp nhất (MOVE_3, EXTRA_ROLL miễn
+    // phí). Ô không phải ô thẻ (ô RIASEC / ⭐ / START) ⇒ không có lá.
+    room.setPendingCardId(cardEffects.drawCardFor(pathTile(next)));
     if (needsAnswer) {
       // Rơi vào ô thẻ: đổi đồng hồ sang ANSWER_TIMEOUT_S cho chính người này.
       room.beginTurn(roller, TurnPhase.WAITING_ANSWER, Instant.now().plusSeconds(rules.answerTimeoutS), false);
@@ -170,6 +178,7 @@ public class TurnCoordinator {
         room.getTurnId(),
         skipped.getName());
     room.clearTurn();
+    room.setPendingCardId(null);
     room.advanceTurn();
     startNextTurn(room, now);
   }
@@ -210,6 +219,7 @@ public class TurnCoordinator {
             player.getName());
         room.setPendingAnswer(false);
         room.setLastDice(null);
+        room.setPendingCardId(null);
         room.clearTurn();
         room.advanceTurn();
         startNextTurn(room, Instant.now());

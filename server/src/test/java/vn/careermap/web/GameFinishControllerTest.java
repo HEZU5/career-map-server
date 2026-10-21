@@ -69,6 +69,7 @@ class GameFinishControllerTest {
         false,
         false,
         Instant.now(),
+        null,
         "FINISHED",
         "host-H12345",
         null,

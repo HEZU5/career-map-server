@@ -32,6 +32,14 @@ public record GameSnapshot(
     boolean turnSkipped,
     boolean lastRollAuto,
     Instant serverTime,
+    /**
+     * Lá bài server đã cấp cho lượt hiện tại (Cơ hội / Thử thách); null nếu
+     * lượt này không rút thẻ.
+     *
+     * <p>Client PHẢI hiển thị lá theo id này (tra id → danh mục lá của client)
+     * thay vì tự rút ở máy: server mới là nguồn sự thật về lá nào.
+     */
+    String pendingCardId,
     // ── Vòng đời phòng ──────────────────────────────────────────────────────
     String status,
     String ownerKey,

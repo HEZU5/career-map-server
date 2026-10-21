@@ -66,6 +66,7 @@ public class GameSnapshotBuilder {
         room.isTurnSkipped(),
         room.isLastRollAuto(),
         now,
+        room.getPendingCardId(),
         room.getStatus().name(),
         room.getOwnerKey(),
         room.getActingHostKey(),

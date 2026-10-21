@@ -13,6 +13,9 @@ package vn.careermap.web.dto;
  *     mà không phải chờ sự kiện WebSocket {@code FINISHED} tới.
  * @param winnerKey playerKey của người thắng khi {@code gameFinished} = true;
  *     null nếu ván kết thúc mà không có ai thắng.
+ * @param cardId lá bài (Cơ hội / Thử thách) mà SERVER đã cấp cho lượt này;
+ *     null nếu người chơi không rơi vào ô thẻ. Client hiển thị theo id này thay
+ *     vì tự rút ở máy (server mới là nguồn sự thật).
  */
 public record DiceResponse(
     int diceValue,
@@ -21,15 +24,17 @@ public record DiceResponse(
     boolean auto,
     long turnId,
     boolean gameFinished,
-    String winnerKey) {
+    String winnerKey,
+    String cardId) {
 
   /**
-   * Lần tung bình thường: ván chưa kết thúc, chưa có người thắng.
+   * Lần tung bình thường: ván chưa kết thúc, chưa có người thắng, không rút
+   * thẻ.
    *
    * <p>Giữ call site cũ (chỉ truyền 5 tham số) không phải sửa — cờ kết thúc và
    * người thắng luôn mặc định là {@code false} / {@code null}.
    */
   public DiceResponse(int diceValue, int newPosition, boolean moved, boolean auto, long turnId) {
-    this(diceValue, newPosition, moved, auto, turnId, false, null);
+    this(diceValue, newPosition, moved, auto, turnId, false, null, null);
   }
 }

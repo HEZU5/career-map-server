@@ -1,11 +1,15 @@
 package vn.careermap.service;
 
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Component;
 import vn.careermap.domain.BonusEffect;
+import vn.careermap.domain.TileType;
 
 /**
  * BẢNG HIỆU ỨNG CỦA 20 LÁ CƠ HỘI / THỬ THÁCH — nguồn sự thật duy nhất ở server.
@@ -34,7 +38,21 @@ public class CardEffectRegistry {
   /** Lựa chọn "đi thêm 2 ô" cho lá {@code CƠ HỘI 10}. */
   public static final String CHOICE_MOVE_2 = "MOVE_2";
 
+  /** Tiền tố mã lá CƠ HỘI — dùng để tách bộ lá theo loại ô. */
+  public static final String CHANCE_PREFIX = "CƠ HỘI ";
+
+  /** Tiền tố mã lá THỬ THÁCH — dùng để tách bộ lá theo loại ô. */
+  public static final String CHALLENGE_PREFIX = "THỬ THÁCH ";
+
   private final Map<String, CardEffectSpec> specs = new LinkedHashMap<>();
+
+  /** Bộ lá CƠ HỘI — rút khi người chơi rơi vào ô {@code CHANCE}. */
+  private final List<String> chanceDeck = new ArrayList<>();
+
+  /** Bộ lá THỬ THÁCH — rút khi người chơi rơi vào ô {@code CHALLENGE}. */
+  private final List<String> challengeDeck = new ArrayList<>();
+
+  private final SecureRandom random = new SecureRandom();
 
   public CardEffectRegistry() {
     // ── 10 lá CƠ HỘI ───────────────────────────────────────────────────────
@@ -68,6 +86,52 @@ public class CardEffectRegistry {
 
   private void put(String cardId, BonusEffect effect, long winPoints, Set<String> allowedChoices) {
     specs.put(cardId, new CardEffectSpec(effect, winPoints, allowedChoices));
+    if (cardId.startsWith(CHANCE_PREFIX)) {
+      chanceDeck.add(cardId);
+    } else if (cardId.startsWith(CHALLENGE_PREFIX)) {
+      challengeDeck.add(cardId);
+    }
+  }
+
+  /**
+   * RÚT 1 lá theo loại ô — SERVER là nguồn sự thật về "người chơi rút được lá
+   * nào".
+   *
+   * <p>Trước đây client tự rút ở máy rồi tự khai {@code cardId} lên server ⇒
+   * người chơi tự chọn được lá đẹp nhất (MOVE_3, EXTRA_ROLL miễn phí). Nay
+   * server rút ngay khi người chơi rơi vào ô thẻ và lưu mã lá vào phòng (xem
+   * {@code Room#getPendingCardId()}); client chỉ hiển thị theo lá server cấp.
+   *
+   * @param tileType loại ô người chơi vừa rơi vào
+   * @return mã lá (có dấu), hoặc {@code null} nếu ô đó không phải ô thẻ (ô
+   *     RIASEC, ô ⭐, ô START)
+   */
+  public String drawCardFor(TileType tileType) {
+    List<String> deck = deckFor(tileType);
+    if (deck.isEmpty()) {
+      return null;
+    }
+    return deck.get(random.nextInt(deck.size()));
+  }
+
+  private List<String> deckFor(TileType tileType) {
+    if (tileType == TileType.CHANCE) {
+      return chanceDeck;
+    }
+    if (tileType == TileType.CHALLENGE) {
+      return challengeDeck;
+    }
+    return List.of();
+  }
+
+  /** Bộ 10 lá CƠ HỘI — dùng để đối chiếu và cho test. */
+  public List<String> chanceCardIds() {
+    return List.copyOf(chanceDeck);
+  }
+
+  /** Bộ 10 lá THỬ THÁCH — dùng để đối chiếu và cho test. */
+  public List<String> challengeCardIds() {
+    return List.copyOf(challengeDeck);
   }
 
   /**
@@ -104,6 +168,20 @@ public class CardEffectRegistry {
     /** Lá này có bắt buộc người chơi chọn không? */
     public boolean requiresChoice() {
       return !allowedChoices.isEmpty();
+    }
+
+    /**
+     * Số Điểm Chiến thắng lá mang khi CHỈ CẦN CỘNG ĐIỂM.
+     *
+     * <p>Lá di chuyển (MOVE_2 / MOVE_3) KHÔNG cộng điểm — hiệu ứng của chúng là
+     * dời quân, không phải cộng điểm. Cùng quy tắc với
+     * {@code GameService.applyBonusEffect} để hai đường không lệch nhau.
+     */
+    public long awardWinPoints() {
+      return switch (effect) {
+        case MOVE_2, MOVE_3 -> 0L;
+        default -> winPoints;
+      };
     }
   }
 }

@@ -31,10 +31,16 @@ import vn.careermap.web.dto.BonusEffectResponse;
 /**
  * Server là NGUỒN SỰ THẬT cho hiệu ứng 20 lá Cơ hội / Thử thách.
  *
- * <p>Trước đây client tự khai {@code winPoints} rồi gửi lên, server tin theo ⇒
- * ai cũng tự khai điểm tuỳ ý. Nay server tự tra bảng hiệu ứng theo {@code
- * cardId}, tự tính điểm và tự áp hiệu ứng thật (tiến thêm ô, chơi thêm lượt,
- * cộng cho cả bàn...).
+ * <p>Ba lớp chống khai thác được khoá ở đây:
+ *
+ * <ol>
+ *   <li><b>Cửa</b> — không có phòng đang chơi (ván một người, phòng đã xong,
+ *       phòng chưa bắt đầu) thì KHÔNG được cộng điểm (403).
+ *   <li><b>Lượt</b> — không phải lượt của mình / lượt không ở pha chờ trả lời
+ *       thì 409.
+ *   <li><b>Lá</b> — lá là do SERVER rút và cấp, không phải lá client tự khai
+ *       (lệch ⇒ 400).
+ * </ol>
  *
  * <p>Thuần JUnit + AssertJ + Mockito, không Spring context, không database.
  */
@@ -52,7 +58,8 @@ class BonusEffectTest {
     when(players.save(any(Player.class))).thenAnswer(call -> call.getArgument(0));
     // TurnCoordinator THẬT: cần `needsAnswerAt` đúng luật bàn (mọi ô trừ START
     // và ⭐ đều phải rút thẻ) — mock sẽ trả false cho mọi ô.
-    TurnCoordinator turns = new TurnCoordinator(RULES, (room, player, now) -> false);
+    TurnCoordinator turns =
+        new TurnCoordinator(RULES, (room, player, now) -> false, new CardEffectRegistry());
     return new GameService(
         players,
         mock(GameBroadcaster.class),
@@ -79,9 +86,31 @@ class BonusEffectTest {
     return p;
   }
 
-  /** Đưa phòng vào đúng trạng thái lúc vừa rơi vào ô thẻ: chờ trả lời. */
+  /** Người chơi chơi MỘT MÌNH — không ở phòng nào. */
+  private Player soloPlayer(String key) {
+    Player p = player(key, 10);
+    byKey.put(key, p);
+    return p;
+  }
+
+  /**
+   * Lượt trả lời ở ô KHÔNG phải ô thẻ (ô RIASEC / ô ⭐): không có lá để rút.
+   */
   private void openAnswerTurn(Room room, Player player) {
     room.setPendingAnswer(true);
+    room.setPendingCardId(null);
+    room.beginTurn(player, TurnPhase.WAITING_ANSWER, Instant.now().plusSeconds(60), false);
+  }
+
+  /**
+   * Lượt trả lời ở ô THẺ: server đã rút sẵn lá {@code cardId} và lưu vào phòng.
+   *
+   * <p>Mô phỏng đúng trạng thái thật sau khi {@code TurnCoordinator.rollAndMove}
+   * rút lá.
+   */
+  private void openCardTurn(Room room, Player player, String cardId) {
+    room.setPendingAnswer(true);
+    room.setPendingCardId(cardId);
     room.beginTurn(player, TurnPhase.WAITING_ANSWER, Instant.now().plusSeconds(60), false);
   }
 
@@ -94,6 +123,132 @@ class BonusEffectTest {
   private static void assertForbidden(Throwable thrown) {
     assertThat(thrown).isInstanceOf(ResponseStatusException.class);
     assertThat(((ResponseStatusException) thrown).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(((ResponseStatusException) thrown).getReason()).isNotBlank();
+  }
+
+  // ── CỬA: không có phòng đang chơi thì không được cộng điểm ─────────────
+
+  @Test
+  void khongCoPhongKhongDuocCongDiem() {
+    // Ván một người: trước đây endpoint bỎ QUA mọi chốt lượt ⇒ gọi 5 lần là
+    // cộng 3 + 6 + 9 + 12 + 15 điểm. Nay chặn ở cửa.
+    Player solo = soloPlayer("solo1");
+
+    assertThatThrownBy(
+            () ->
+                service()
+                    .applyBonusEffect(new BonusEffectRequest("solo1", "CƠ HỘI 05", null, null)))
+        .satisfies(BonusEffectTest::assertForbidden);
+
+    assertThat(solo.getWinPoints()).isZero();
+    assertThat(solo.getTotalAnswered()).isZero();
+  }
+
+  @Test
+  void phongDaKetThucKhongDuocCongDiem() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    room.setStatus(RoomStatus.FINISHED);
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
+
+    assertThatThrownBy(
+            () ->
+                service()
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+        .satisfies(BonusEffectTest::assertForbidden);
+
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+  }
+
+  @Test
+  void phongChuaBatDauKhongDuocCongDiem() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    room.setActive(false);
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
+
+    assertThatThrownBy(
+            () ->
+                service()
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+        .satisfies(BonusEffectTest::assertForbidden);
+
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+  }
+
+  @Test
+  void khongPhaiLuotCuaMinhKhongDuocCongDiem() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
+
+    assertThatThrownBy(
+            () ->
+                service()
+                    .applyBonusEffect(new BonusEffectRequest("p2", "CƠ HỘI 05", null, null)))
+        .isInstanceOf(NotYourTurnException.class);
+
+    assertThat(room.findPlayer("p2").getWinPoints()).isZero();
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+  }
+
+  @Test
+  void khongPhaiLuotRutTheKhongDuocApHieuUng() {
+    // Lượt chờ trả lời nhưng rơi vào ô RIASEC ⇒ không có lá để áp hiệu ứng.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openAnswerTurn(room, room.findPlayer("p1"));
+
+    assertThatThrownBy(
+            () ->
+                service()
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+        .satisfies(
+            thrown -> {
+              assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+              assertThat(((ResponseStatusException) thrown).getStatusCode())
+                  .isEqualTo(HttpStatus.CONFLICT);
+            });
+
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+  }
+
+  // ── LÁ: server rút, client không tự chọn ─────────────────────────────────
+
+  @Test
+  void clientKhongTheTuKhaiCardId() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
+
+    // Client khai lá đẹp hơn (CƠ HỘI 05 = 3 điểm) trong khi server đã cấp
+    // "CƠ HỘI 01" (2 điểm) ⇒ 400, không cộng điểm.
+    assertThatThrownBy(
+            () ->
+                service()
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+        .satisfies(BonusEffectTest::assertBadRequest);
+
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+  }
+
+  @Test
+  void clientGuiCardIdKhongDungCardIdDaRut() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
+
+    BonusEffectResponse res =
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null));
+
+    assertThat(res.winPoints()).isEqualTo(3);
+    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
+  }
+
+  @Test
+  void bonusEffectKhongGuiCardIdThiDungLaDaRut() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
+
+    BonusEffectResponse res =
+        service().applyBonusEffect(new BonusEffectRequest("p1", null, null, null));
+
+    assertThat(res.winPoints()).isEqualTo(3);
+    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
   }
 
   // ── NONE: chỉ cộng điểm, đóng lượt ───────────────────────────────────────
@@ -101,7 +256,7 @@ class BonusEffectTest {
   @Test
   void coHoi01ChiCongDiem() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null));
@@ -117,12 +272,14 @@ class BonusEffectTest {
     assertThat(room.getTurnPlayerKey()).isEqualTo("p2");
     assertThat(room.getTurnPhase()).isEqualTo(TurnPhase.WAITING_ROLL);
     assertThat(room.isPendingAnswer()).isFalse();
+    // Lá đã dùng xong ⇒ không còn lá treo trên phòng.
+    assertThat(room.getPendingCardId()).isNull();
   }
 
   @Test
   void thuThach01ChiCongDiem() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "THỬ THÁCH 01");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "THỬ THÁCH 01", null, null));
@@ -135,7 +292,7 @@ class BonusEffectTest {
   @Test
   void thuThach04Cong3Diem() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "THỬ THÁCH 04");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "THỬ THÁCH 04", null, null));
@@ -151,7 +308,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
     p1.setCurrentPosition(10);
-    openAnswerTurn(room, p1);
+    openCardTurn(room, p1, "CƠ HỘI 03");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null));
@@ -174,7 +331,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
     p1.setCurrentPosition(3);
-    openAnswerTurn(room, p1);
+    openCardTurn(room, p1, "CƠ HỘI 09");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null));
@@ -195,7 +352,7 @@ class BonusEffectTest {
     // đi qua START bằng hiệu ứng sẽ không bao giờ đủ điều kiện thắng.
     Room room = room("p1", player("p1", 1), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    openAnswerTurn(room, p1);
+    openCardTurn(room, p1, "CƠ HỘI 09");
 
     service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null));
 
@@ -208,7 +365,7 @@ class BonusEffectTest {
   @Test
   void coHoi02ChoThemMotLuot() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 02");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 02", null, null));
@@ -220,6 +377,7 @@ class BonusEffectTest {
     assertThat(room.getTurnPlayerKey()).isEqualTo("p1");
     assertThat(room.getTurnPhase()).isEqualTo(TurnPhase.WAITING_ROLL);
     assertThat(room.isPendingAnswer()).isFalse();
+    assertThat(room.getPendingCardId()).isNull();
   }
 
   // ── PICK_PLAYER_PLUS1: chọn 1 người, cả hai cùng +1 ─────────────────────
@@ -227,7 +385,7 @@ class BonusEffectTest {
   @Test
   void coHoi04ChonMotNguoiVaCaHaiNhanPlus1() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2"));
@@ -242,7 +400,7 @@ class BonusEffectTest {
   @Test
   void coHoi04ChonChinhMinhThiChiCongMotLan() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p1"));
@@ -254,7 +412,7 @@ class BonusEffectTest {
   @Test
   void coHoi04ChonNguoiKhongThuocPhong() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     assertThatThrownBy(
             () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "ghost")))
@@ -269,7 +427,7 @@ class BonusEffectTest {
   void coHoi04ChonNguoiDaRoiPhong() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     room.findPlayer("p2").setLeft(true);
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     assertThatThrownBy(
             () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2")))
@@ -279,7 +437,7 @@ class BonusEffectTest {
   @Test
   void coHoi04ChuaChonNguoiThiBaoLoi() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     assertThatThrownBy(
             () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, null)))
@@ -291,7 +449,7 @@ class BonusEffectTest {
   @Test
   void coHoi08TatCaNguoiNhanPlus1() {
     Room room = room("p1", player("p1", 10), player("p2", 10), player("p3", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 08");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 08", null, null));
@@ -308,7 +466,7 @@ class BonusEffectTest {
   void coHoi08KhongCongChoNguoiDaRoiPhong() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     room.findPlayer("p2").setLeft(true);
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 08");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 08", null, null));
@@ -322,7 +480,7 @@ class BonusEffectTest {
   @Test
   void coHoi10ChonMotTrongHai() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 10");
 
     // Choice sai → 400, không được cộng điểm.
     assertThatThrownBy(
@@ -345,7 +503,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
     p1.setCurrentPosition(10);
-    openAnswerTurn(room, p1);
+    openCardTurn(room, p1, "CƠ HỘI 10");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null));
@@ -360,23 +518,57 @@ class BonusEffectTest {
   @Test
   void coHoi10ChuaChonThiBaoLoi() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 10");
 
     assertThatThrownBy(
             () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 
+  // ── Ngưỡng thắng đếm CÂU ĐÃ TRẢ LỜI, không phải LÁ ĐÃ RÚT ───────────────
+
   @Test
   void rutLaTinhVaoSoCauDaTraLoi() {
     // Rút lá = đã trả lời 1 câu ở ô đích: ngưỡng thắng (số câu) không được
     // nặng hơn đường cũ (`/game/answer`).
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null));
 
     assertThat(room.findPlayer("p1").getTotalAnswered()).isEqualTo(1);
+  }
+
+  @Test
+  void moveKhongCongTotalAnswered() {
+    // Lá MOVE_2: người chơi KHÔNG trả lời câu nào, chỉ đi thêm 2 ô ⇒ không
+    // được tính vào "số câu đã trả lời" (ngưỡng thắng là totalAnswered >= 12).
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 03");
+
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null));
+
+    assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
+  }
+
+  @Test
+  void move3KhongCongTotalAnswered() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 09");
+
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null));
+
+    assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
+  }
+
+  @Test
+  void coHoi10ChonMove2KhongCongTotalAnswered() {
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 10");
+
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null));
+
+    assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
   }
 
   // ── Ràng buộc: lá lạ, lá thiếu dấu, client tự khai điểm ─────────────────
@@ -384,7 +576,7 @@ class BonusEffectTest {
   @Test
   void cardIdKhongBietThiBaoLoi() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     assertThatThrownBy(
             () ->
@@ -398,10 +590,11 @@ class BonusEffectTest {
   void cardIdKhongDungDauKhongDoiChieu() {
     // "CO HOI 01" (không dấu) KHÔNG phải "CƠ HỘI 01" — lá sai phải bị từ chối.
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CO HOI 01", null, null)))
+            () ->
+                service().applyBonusEffect(new BonusEffectRequest("p1", "CO HOI 01", null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 
@@ -414,7 +607,7 @@ class BonusEffectTest {
 
     // ... và server vẫn tự tính đúng theo bảng.
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null));
 
@@ -425,7 +618,7 @@ class BonusEffectTest {
   @Test
   void goiHaiLanKhongCongDiemHaiLan() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
     GameService service = service();
 
     service.applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null));
@@ -437,46 +630,50 @@ class BonusEffectTest {
   }
 
   @Test
-  void khongPhaiLuotCuaMinhThiKhongDuocApHieuUng() {
-    Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
-
-    assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("p2", "CƠ HỘI 01", null, null)))
-        .isInstanceOf(NotYourTurnException.class);
-    assertThat(room.findPlayer("p2").getWinPoints()).isZero();
-  }
-
-  @Test
   void nguoiChoiKhongTonTaiThiBaoLoi() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
-    openAnswerTurn(room, room.findPlayer("p1"));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     assertThatThrownBy(
             () -> service().applyBonusEffect(new BonusEffectRequest("ghost", "CƠ HỘI 01", null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 
-  // ── Đường CŨ (/game/answer): server cũng không được tin lời client ───────
+  // ── Đường CŨ (/game/answer): server KHÔNG tin lời client ─────────────────
+
+  @Test
+  void answerBoQuaWinPointsTuClient() {
+    // Client khai 999 điểm VÀ khai lá khác ("CƠ HỘI 01" = 2 điểm) trong khi
+    // server đã cấp "CƠ HỘI 05" (3 điểm) ⇒ server trả đúng 3 điểm của LÁ
+    // SERVER ĐÃ CẤP: không phải 999, không phải 2.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
+
+    AnswerResponse res =
+        service().answer(new AnswerRequest("p1", "CƠ HỘI 01", "A", "R", null, 0, 999));
+
+    assertThat(res.winPoints()).isEqualTo(3);
+    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
+  }
 
   @Test
   void duongCuKhongTinDiemClientKhai() {
-    // Client khai 999 điểm cho lá "CƠ HỘI 01" ⇒ server cắt còn đúng số trong
-    // bảng lá (2). Đây là lỗ hổng cũ: trước đây server tin nguyên lời client.
+    // Lượt KHÔNG phải ô thẻ (ô RIASEC) ⇒ không có lá để rút ⇒ client khai 999
+    // cũng không được cộng điểm nào.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openAnswerTurn(room, room.findPlayer("p1"));
 
     AnswerResponse res =
         service().answer(new AnswerRequest("p1", "CƠ HỘI 01", "A", "R", null, 0, 999));
 
-    assertThat(res.winPoints()).isEqualTo(2);
-    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(2);
+    assertThat(res.winPoints()).isZero();
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
   }
 
   @Test
   void duongCuBoQuaTheVanKhongNhanDiem() {
-    // Nút "không hoàn thành" gửi winPoints = 0 ⇒ vẫn phải là 0 (đường cũ giữ
-    // nguyên hành vi này, chỉ bị chặn ở trần trên).
+    // Nút "không hoàn thành" gửi winPoints = 0. Lượt này không phải ô thẻ ⇒
+    // không có lá ⇒ 0 điểm.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openAnswerTurn(room, room.findPlayer("p1"));
 
@@ -485,6 +682,20 @@ class BonusEffectTest {
 
     assertThat(res.winPoints()).isZero();
     assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+  }
+
+  @Test
+  void duongCuKhongTuQuyetDiemChoLaDaRut() {
+    // Lượt rút lá: client gửi winPoints = 0 (nút "không hoàn thành") ⇒ server
+    // vẫn trả điểm theo LÁ SERVER ĐÃ CẤP — client không còn tự quyết.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "THỬ THÁCH 04");
+
+    AnswerResponse res =
+        service().answer(new AnswerRequest("p1", "THỬ THÁCH 04", "A", "R", null, 0, 0));
+
+    assertThat(res.winPoints()).isEqualTo(3);
+    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
   }
 
   @Test
