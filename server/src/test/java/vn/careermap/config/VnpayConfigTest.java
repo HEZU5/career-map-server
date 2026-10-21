@@ -101,20 +101,74 @@ class VnpayConfigTest {
 
   // ── Bộ giao thức API (vnp_Command / vnp_Version / vnp_OrderType) ──────────
 
-  /** Mặc định là API CŨ: {@code pay_web}, không gửi version/order-type. */
+  /**
+   * Mặc định là API 2.1.0: {@code paymentv2/vpcpay.html} + {@code pay} +
+   * {@code vnp_Version=2.1.0} + {@code vnp_OrderType=other}.
+   *
+   * <p>Vì sao đổi: endpoint cũ {@code paymentgateway/paymenturl.htm} đã bị
+   * VNPay thu hồi (HTTP 404 trên sandbox) nên không được làm mặc định.
+   */
   @Test
-  void macDinhLaApiCuPayWeb() {
+  void macDinhLaApi21() {
     VnpayConfig config = config("TMNCODE", "secret", "https://app.example/return",
         "https://app.example/ipn");
 
-    assertThat(config.getCommand()).isEqualTo("pay_web");
-    assertThat(config.getVersion()).isEmpty();
-    assertThat(config.getOrderType()).isEmpty();
+    assertThat(config.getBaseUrl())
+        .isEqualTo("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html");
+    assertThat(config.getCommand()).isEqualTo("pay");
+    assertThat(config.getVersion()).isEqualTo("2.1.0");
+    assertThat(config.getOrderType()).isEqualTo("other");
+    assertThat(config.isApi21()).isTrue();
+    // API 2.1.0 báo thành công bằng vnp_TransactionStatus=00.
+    assertThat(config.successTransactionStatus()).isEqualTo("00");
+    // API 2.1.0 KHÔNG được gửi vnp_SecureHashType.
+    assertThat(config.allowsSecureHashType()).isFalse();
+  }
+
+  /**
+   * Ruling B: thuật toán chữ ký MẶC ĐỊNH THEO PHIÊN BẢN API — API 2.1.0 dùng
+   * HMAC-SHA512 (hash 128 hex), API cũ dùng HMAC-SHA256 (64 hex).
+   *
+   * <p>Cấu hình ở đây giống HỆT cấu hình production: base/command/version/
+   * order-type lấy mặc định (2.1.0) và {@code hash-algorithm} để RỖNG ⇒
+   * {@code VnpayConfig} tự chọn SHA512.
+   */
+  @Test
+  void macDinhApi21DungSha512() {
+    VnpayConfig config = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "",
+        VnpayConfig.DEFAULT_COMMAND, VnpayConfig.DEFAULT_VERSION, VnpayConfig.DEFAULT_ORDER_TYPE);
+
+    assertThat(config.isApi21()).isTrue();
+    assertThat(config.getHashAlgorithm()).isEqualTo("HmacSHA512");
+    assertThat(config.getHashAlgorithm()).isEqualTo(VnpayConfig.DEFAULT_HASH_ALGORITHM_API21);
+  }
+
+  /**
+   * API cũ ({@code pay_web}) vẫn phải dùng HMAC-SHA256 — không hardcode
+   * SHA512 để còn quay lại được API cũ.
+   */
+  @Test
+  void apiCuVanDungSha256() {
+    VnpayConfig config = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "", "pay_web", "", "");
+
     assertThat(config.isApi21()).isFalse();
-    // API cũ báo thành công bằng vnp_TransactionStatus=01.
-    assertThat(config.successTransactionStatus()).isEqualTo("01");
-    // API cũ (2.0.x) được gửi vnp_SecureHashType.
-    assertThat(config.allowsSecureHashType()).isTrue();
+    assertThat(config.getHashAlgorithm()).isEqualTo("HmacSHA256");
+    assertThat(config.getHashAlgorithm()).isEqualTo(VnpayConfig.DEFAULT_HASH_ALGORITHM_LEGACY);
+  }
+
+  /** Thuật toán chỉ định tay luôn thắng mặc định theo phiên bản. */
+  @Test
+  void hashAlgorithmChiDinhTayDuocGiuNguyen() {
+    VnpayConfig config = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "SHA256", "",
+        VnpayConfig.DEFAULT_COMMAND, VnpayConfig.DEFAULT_VERSION, VnpayConfig.DEFAULT_ORDER_TYPE);
+
+    assertThat(config.getHashAlgorithm()).isEqualTo("SHA256");
   }
 
   /** API 2.1.0: {@code vnp_Command=pay} + {@code vnp_Version=2.1.0}. */
@@ -196,6 +250,39 @@ class VnpayConfigTest {
       assertThat(bean.getOrderType()).isEqualTo("other");
       assertThat(bean.getHashAlgorithm()).isEqualTo("SHA512");
       assertThat(bean.isConfigured()).isTrue();
+    }
+  }
+
+  /**
+   * Đường đi của PRODUCTION: {@code vnpay.hash-algorithm} RỖNG (biến môi trường
+   * {@code VNPAY_HASH_ALGORITHM} không được đặt) ⇒ Spring đọc được chuỗi rỗng ⇒
+   * {@link VnpayConfig} tự chọn HMAC-SHA512 theo phiên bản API 2.1.0.
+   *
+   * <p>Đây là bài test bảo vệ đúng đường đi của production — nếu ai đó ghim
+   * {@code HmacSHA256} vào {@code @Value} thì test này đỏ.
+   */
+  @Test
+  void springKhiHashAlgorithmRongThiTuChonSha512() {
+    try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext()) {
+      TestPropertySourceUtils.addInlinedPropertiesToEnvironment(
+          ctx,
+          "vnpay.enabled=true",
+          "vnpay.tmn-code=TMNCODE",
+          "vnpay.hash-secret=secret",
+          "vnpay.return-url=https://app.example/return",
+          "vnpay.ipn-url=https://app.example/ipn",
+          "vnpay.command=pay",
+          "vnpay.version=2.1.0",
+          "vnpay.order-type=other",
+          "vnpay.hash-algorithm=");
+
+      ctx.register(VnpayConfig.class);
+      ctx.refresh();
+
+      VnpayConfig bean = ctx.getBean(VnpayConfig.class);
+
+      assertThat(bean.getHashAlgorithm()).isEqualTo("HmacSHA512");
+      assertThat(bean.isApi21()).isTrue();
     }
   }
 }

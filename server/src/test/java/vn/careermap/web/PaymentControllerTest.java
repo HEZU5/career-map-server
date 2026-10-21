@@ -91,7 +91,8 @@ class PaymentControllerTest {
   private static Map<String, String> signedParams(String txnRef) {
     Map<String, String> params = new LinkedHashMap<>();
     params.put("vnp_TxnRef", txnRef);
-    params.put("vnp_TransactionStatus", "01");
+    // Mặc định là API 2.1.0 (vnp_Command=pay) => mã thành công là "00".
+    params.put("vnp_TransactionStatus", "00");
     params.put("vnp_Amount", "5000000");
     params.put("vnp_SecureHash", SIGNER.sign(params));
     return params;
@@ -111,7 +112,7 @@ class PaymentControllerTest {
             ipnPost(
                 Map.of(
                     "vnp_TxnRef", "order1",
-                    "vnp_TransactionStatus", "01",
+                    "vnp_TransactionStatus", "00",
                     "vnp_Amount", "5000000",
                     "vnp_SecureHash", "chu-ky-sai")))
         .andExpect(status().isOk())
@@ -196,7 +197,7 @@ class PaymentControllerTest {
     when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
     mvc.perform(get("/api/payments/ipn").param("vnp_TxnRef", "order1")
-            .param("vnp_TransactionStatus", "01")
+            .param("vnp_TransactionStatus", "00")
             .param("vnp_Amount", "5000000")
             .param("vnp_SecureHash", SIGNER.sign(signedParams("order1"))))
         .andExpect(status().isOk())

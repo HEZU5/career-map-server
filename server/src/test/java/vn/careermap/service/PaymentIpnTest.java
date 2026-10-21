@@ -56,7 +56,8 @@ class PaymentIpnTest {
     when(orderRepository.findById("order1")).thenReturn(Optional.of(order));
     when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-    String result = service.handleIpn(signedParams("order1", "01"));
+    // Mặc định là API 2.1.0 (vnp_Command=pay) => mã thành công là "00".
+    String result = service.handleIpn(signedParams("order1", "00"));
 
     assertThat(result).isEqualTo("{\"RspCode\":\"00\",\"Message\":\"Confirm Success\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PAID);
@@ -69,7 +70,7 @@ class PaymentIpnTest {
     PaymentOrder order = PaymentOrder.create("order2", "p", "R12345", 50000, 15);
     when(orderRepository.findById("order2")).thenReturn(Optional.of(order));
 
-    Map<String, String> params = signedParams("order2", "01");
+    Map<String, String> params = signedParams("order2", "00");
     params.put("vnp_SecureHash", "chu-ky-sai");
     String result = service.handleIpn(params);
 
@@ -82,7 +83,7 @@ class PaymentIpnTest {
   void ipnOrderIdKhongTonTaiKhongNemLoi() {
     when(orderRepository.findById("missing")).thenReturn(Optional.empty());
 
-    String result = service.handleIpn(signedParams("missing", "01"));
+    String result = service.handleIpn(signedParams("missing", "00"));
 
     assertThat(result).isEqualTo("{\"RspCode\":\"01\",\"Message\":\"Order not found\"}");
   }
@@ -94,7 +95,7 @@ class PaymentIpnTest {
     when(orderRepository.findById("order3")).thenReturn(Optional.of(order));
     when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-    String result = service.handleIpn(signedParams("order3", "01"));
+    String result = service.handleIpn(signedParams("order3", "00"));
 
     assertThat(result).isEqualTo("{\"RspCode\":\"00\",\"Message\":\"Confirm Success\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PAID);
@@ -106,11 +107,11 @@ class PaymentIpnTest {
     when(orderRepository.findById("order4")).thenReturn(Optional.of(order));
     when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-    service.handleIpn(signedParams("order4", "01"));
+    service.handleIpn(signedParams("order4", "00"));
     Instant firstPaidAt = order.getPaidAt();
 
-    String r2 = service.handleIpn(signedParams("order4", "01"));
-    String r3 = service.handleIpn(signedParams("order4", "01"));
+    String r2 = service.handleIpn(signedParams("order4", "00"));
+    String r3 = service.handleIpn(signedParams("order4", "00"));
 
     assertThat(r2).isEqualTo("{\"RspCode\":\"02\",\"Message\":\"Order already confirmed\"}");
     assertThat(r3).isEqualTo("{\"RspCode\":\"02\",\"Message\":\"Order already confirmed\"}");
@@ -125,11 +126,12 @@ class PaymentIpnTest {
    * hàng ⇒ 10 lần retry cũng không bao giờ thành công, chỉ tối 50 phút.
    */
   @Test
-  void ipnTransactionStatusKhac01KhongDoi() {
+  void ipnTransactionStatusKhacMaThanhCongKhongDoi() {
     PaymentOrder order = PaymentOrder.create("order5", "p", "R12345", 50000, 15);
     when(orderRepository.findById("order5")).thenReturn(Optional.of(order));
 
-    Map<String, String> params = signedParams("order5", "00");
+    // API 2.1.0: "00" là mã THÀNH CÔNG, "01" là giao dịch KHÔNG thành công.
+    Map<String, String> params = signedParams("order5", "01");
     String result = service.handleIpn(params);
 
     assertThat(result).isEqualTo("{\"RspCode\":\"02\",\"Message\":\"Order not confirmed\"}");
@@ -181,7 +183,7 @@ class PaymentIpnTest {
     when(orderRepository.findById("order6"))
         .thenThrow(new DataAccessResourceFailureException("Neon lạnh - connection reset"));
 
-    assertThatThrownBy(() -> service.handleIpn(signedParams("order6", "01")))
+    assertThatThrownBy(() -> service.handleIpn(signedParams("order6", "00")))
         .isInstanceOf(PaymentInfrastructureException.class);
   }
 }

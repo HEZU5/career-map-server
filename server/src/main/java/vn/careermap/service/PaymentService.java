@@ -62,6 +62,15 @@ public class PaymentService {
   private static final String VNP_ORDER_INFO = "Bao cao Holland";
 
   /**
+   * IP dùng cho {@code vnp_IpAddr} khi không đọc được IP client.
+   *
+   * <p>Gateway API 2.1.0 coi {@code vnp_IpAddr} là tham số BẮT BUỘC ⇒ không
+   * được bỏ hẳn tham số. {@code 127.0.0.1} là giá trị IP trong mẫu chính
+   * thức của VNPay (dùng cho đơn tạo từ server).
+   */
+  private static final String VNPAY_FALLBACK_IP = "127.0.0.1";
+
+  /**
    * Khoá tạo đơn theo {@code playerKey} — dải khoá (striped lock).
    *
    * <p>Vì sao: hai tab (hoặc hai lần bấm nhanh) cùng gọi {@code createOrder}
@@ -131,7 +140,9 @@ public class PaymentService {
    *
    * @param playerKey khoá người chơi (không phải ID số)
    * @param clientIp  IP người mua (lấy từ header {@code X-Forwarded-For}); rỗng
-   *                  thì không gửi {@code vnp_IpAddr} (chuẩn VNPay cũng vậy)
+   *                  hoặc sai dạng thì dùng fallback {@code 127.0.0.1} — tham số
+   *                  {@code vnp_IpAddr} là BẮT BUỘC với API 2.1.0 nên không
+   *                  được bỏ hẳn
    * @return thông tin đơn + URL thanh toán
    */
   @Transactional
@@ -237,22 +248,28 @@ public class PaymentService {
     params.put("vnp_Locale", "vn");
     params.put("vnp_ReturnUrl", vnpaySafe(vnpayConfig.getReturnUrl(), "vnp_ReturnUrl"));
     params.put("vnp_IpnUrl", vnpaySafe(vnpayConfig.getIpnUrl(), "vnp_IpnUrl"));
-    // vnp_OrderInfo: BAT BUOC voi lenh pay_web. ASCII khong dau, khong khoang
-    // trang (chu VNPay).
+    // vnp_OrderInfo: BAT BUOC (ca pay_web lan pay). ASCII khong dau; khoang
+    // trang thi gateway van chap nhan (mau chinh thuc cua VNPay cung vay).
     params.put("vnp_OrderInfo", VNP_ORDER_INFO);
-    // vnp_Version / vnp_OrderType: chi co y nghia voi API 2.1.0 (vnp_Command=pay).
+    // vnp_Version / vnp_OrderType: BAT BUOC voi API 2.1.0 (vnp_Command=pay).
     // RONG = khong gui (API cu khong co hai tham so nay).
     putIfNotBlank(params, "vnp_Version", vnpayConfig.getVersion());
     putIfNotBlank(params, "vnp_OrderType", vnpayConfig.getOrderType());
-    // vnp_IpAddr: IP nguoi mua. Khong co header X-Forwarded-For thi BO QUA
-    // (gia tri rong se bi loc khoi chu ky nhu chuan VNPay).
+    // vnp_IpAddr: IP nguoi mua. KHONG BO HANG tham so nay: gateway 2.1.0 coi
+    // vnp_IpAddr la tham so BAT BUOC (thieu => "Dữ liệu gửi sang không đúng
+    // định dạng" => don bi tu choi). Khong doc duoc IP client => fallback
+    // 127.0.0.1 (gia tri IP trong mau chinh thuc cua VNPay) + log de biet.
     String ip = vnpayIp(clientIp);
-    if (!ip.isEmpty()) {
-      params.put("vnp_IpAddr", ip);
+    if (ip.isEmpty()) {
+      log.warn("Khong doc duoc IP client - gui vnp_IpAddr=127.0.0.1 (fallback) cho VNPay.");
+      ip = VNPAY_FALLBACK_IP;
     }
+    params.put("vnp_IpAddr", ip);
     // vnp_SecureHashType: chi gui khi duoc cau hinh. Khong gui thi gateway
     // co the tu mac dinh SHA512 => hash lech => gateway tu choi don.
     // API 2.1.0 KHONG duoc gui tham so nay (tai lieu VNPay) => bo qua.
+    // (Yeu cau cua Ruling C: tham so nay cung bi loai khoi chuoi bam, nghien la
+    // no cung khong bao gio duoc ghep vao query gui len gateway.)
     String hashType = vnpayConfig.getHashType();
     if (hashType != null && !hashType.isBlank() && vnpayConfig.allowsSecureHashType()) {
       params.put("vnp_SecureHashType", hashType.trim());
@@ -297,8 +314,9 @@ public class PaymentService {
    * IPv6).
    *
    * <p>Header {@code X-Forwarded-For} do CLIENT kiểm soát ⇒ không được đẩy
-   * bừa ký tự lạ vào payUrl (và vào cả chữ ký). IP sai dạng ⇒ bỏ hẳn tham số
-   * (gateway VNPay cũng từ chối IP sai dạng).
+   * bừa ký tự lạ vào payUrl (và vào cả chữ ký). IP sai dạng ⇒ trả về rỗng để
+   * caller dùng fallback {@code 127.0.0.1} (gateway VNPay cũng từ chối IP sai
+   * dạng, nhưng tham số vẫn phải có mặt với API 2.1.0).
    */
   private static String vnpayIp(String raw) {
     if (raw == null) {

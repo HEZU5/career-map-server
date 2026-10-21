@@ -9,10 +9,15 @@ import org.springframework.stereotype.Component;
 /**
  * Cấu hình VNPay: đọc từ biến môi trường Render qua {@code ${VNPAY_*:}}.
  *
- * <p>HashSecret là khoá HMAC-SHA256 — KHÔNG bao giờ hardcode vào source.
- * Khi không set biến môi trường (local dev) mọi giá trị là rỗng, nên payUrl
- * sẽ đi kèm TmnCode/secret rỗng — endpoint sandbox VNPay sẽ từ chối, nhưng
- * ứng dụng vẫn khởi động và test vẫn chạy (test tự truyền secret vào).
+ * <p>Mặc định là API 2.1.0 ({@code paymentv2/vpcpay.html}): endpoint cũ
+ * {@code paymentgateway/paymenturl.htm} đã bị VNPay thu hồi (HTTP 404).
+ *
+ * <p>HashSecret là khoá HMAC — KHÔNG bao giờ hardcode vào source. Thuật toán
+ * ký theo PHIÊN BẢN API (Ruling B): API 2.1.0 ⇒ HMAC-SHA512, API cũ ⇒
+ * HMAC-SHA256. Khi không set biến môi trường (local dev) mọi giá trị là rỗng,
+ * nên payUrl sẽ đi kèm TmnCode/secret rỗng — endpoint sandbox VNPay sẽ từ
+ * chối, nhưng ứng dụng vẫn khởi động và test vẫn chạy (test tự truyền secret
+ * vào).
  */
 @Component
 public class VnpayConfig {
@@ -46,24 +51,33 @@ public class VnpayConfig {
   /** Mã danh mục hàng hoá ({@code vnp_OrderType}) — API 2.1.0 BẮT BUỘC. */
   public static final String ENV_ORDER_TYPE = "VNPAY_ORDER_TYPE";
 
-  /** Gateway sandbox mặc định (API cũ {@code pay_web}). */
+  /** Gateway sandbox mặc định (API 2.1.0 {@code paymentv2/vpcpay.html}). */
   public static final String DEFAULT_BASE_URL =
-      "https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm";
+      "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
 
-  /** Lệnh mặc định — API cũ {@code paymentgateway/paymenturl.htm}. */
-  public static final String DEFAULT_COMMAND = "pay_web";
+  /** Lệnh mặc định — API 2.1.0 {@code paymentv2/vpcpay.html}. */
+  public static final String DEFAULT_COMMAND = "pay";
 
   /**
-   * Phiên bản API mặc định — rỗng = KHÔNG gửi {@code vnp_Version} (API cũ
-   * không có tham số này). Chuyển sang API 2.1.0 thì đặt {@code 2.1.0}.
+   * Phiên bản API mặc định — API 2.1.0 BẮT BUỘC {@code vnp_Version=2.1.0}
+   * (gateway trả "Dữ liệu gửi sang không đúng định dạng" nếu thiếu).
    */
-  public static final String DEFAULT_VERSION = "";
+  public static final String DEFAULT_VERSION = "2.1.0";
 
-  /** Danh mục hàng hoá mặc định — rỗng = KHÔNG gửi {@code vnp_OrderType}. */
-  public static final String DEFAULT_ORDER_TYPE = "";
+  /**
+   * Danh mục hàng hoá mặc định — API 2.1.0 BẮT BUỘC {@code vnp_OrderType}
+   * (mẫu chính thức của VNPay dùng {@code other}).
+   */
+  public static final String DEFAULT_ORDER_TYPE = "other";
 
   /** Thuật toán chữ ký mặc định. */
   public static final String DEFAULT_HASH_ALGORITHM = "HmacSHA256";
+
+  /** Thuật toán chữ ký của API 2.1.0 — tài liệu VNPay BẮT BUỘC HMAC-SHA512. */
+  public static final String DEFAULT_HASH_ALGORITHM_API21 = "HmacSHA512";
+
+  /** Thuật toán chữ ký của API cũ (pay_web) — SHA256. */
+  public static final String DEFAULT_HASH_ALGORITHM_LEGACY = "HmacSHA256";
 
   /** Bật/tắt thanh toán VNPay; đọc để kiểm tra sẵn sàng, chặn sớm khi chưa cấu hình. */
   private final boolean enabled;
@@ -80,10 +94,13 @@ public class VnpayConfig {
   /** URL IPN (server-to-server) VNPay gọi báo kết quả thật. */
   private final String ipnUrl;
 
-  /** URL gateway VNPay (pay_web). */
+  /** URL gateway VNPay (API 2.1.0: {@code paymentv2/vpcpay.html}). */
   private final String baseUrl;
 
-  /** Thuật toán HMAC dùng để ký: {@code HmacSHA256} (mặc định) hoặc {@code HmacSHA512}. */
+  /**
+   * Thuật toán HMAC dùng để ký: {@code HmacSHA256} (API cũ) hoặc
+   * {@code HmacSHA512} (API 2.1.0). Rỗng = tự chọn theo phiên bản API.
+   */
   private final String hashAlgorithm;
 
   /** Kiểu hash gửi kèm cho gateway ({@code vnp_SecureHashType}); rỗng = không gửi. */
@@ -92,10 +109,10 @@ public class VnpayConfig {
   /** Lệnh thanh toán {@code vnp_Command} — {@code pay_web} (API cũ) hoặc {@code pay} (API 2.1.0). */
   private final String command;
 
-  /** Phiên bản API {@code vnp_Version} — rỗng = không gửi (API cũ). */
+  /** Phiên bản API {@code vnp_Version} — mặc định {@code 2.1.0}; rỗng = không gửi (API cũ). */
   private final String version;
 
-  /** Danh mục hàng hoá {@code vnp_OrderType} — rỗng = không gửi (API cũ). */
+  /** Danh mục hàng hoá {@code vnp_OrderType} — mặc định {@code other}; rỗng = không gửi (API cũ). */
   private final String orderType;
 
   /**
@@ -105,6 +122,10 @@ public class VnpayConfig {
    * rút gọn cho test ở dưới). Không ghim constructor này thì Spring không biết
    * chọn cái nào ⇒ "No default constructor found" ⇒ <b>ứng dụng KHÔNG KHỞI
    * ĐỘNG ĐƯỢC</b> (mọi giá trị VNPay cũng rỗng ⇒ không tạo được đơn).
+   *
+   * <p>{@code vnpay.hash-algorithm} để RỖNG mặc định: như vậy thuật toán được
+   * chọn theo phiên bản API (Ruling B) — 2.1.0 thì SHA512, API cũ thì SHA256.
+   * Nếu ghim {@code HmacSHA256} ở đây thì production sẽ ký sai thuật toán.
    */
   @Autowired
   public VnpayConfig(
@@ -114,7 +135,7 @@ public class VnpayConfig {
       @Value("${vnpay.return-url:}") String returnUrl,
       @Value("${vnpay.ipn-url:}") String ipnUrl,
       @Value("${vnpay.base-url:" + DEFAULT_BASE_URL + "}") String baseUrl,
-      @Value("${vnpay.hash-algorithm:" + DEFAULT_HASH_ALGORITHM + "}") String hashAlgorithm,
+      @Value("${vnpay.hash-algorithm:}") String hashAlgorithm,
       @Value("${vnpay.hash-type:}") String hashType,
       @Value("${vnpay.command:" + DEFAULT_COMMAND + "}") String command,
       @Value("${vnpay.version:" + DEFAULT_VERSION + "}") String version,
@@ -125,17 +146,26 @@ public class VnpayConfig {
     this.returnUrl = returnUrl;
     this.ipnUrl = ipnUrl;
     this.baseUrl = isBlank(baseUrl) ? DEFAULT_BASE_URL : baseUrl.trim();
-    this.hashAlgorithm =
-        isBlank(hashAlgorithm) ? DEFAULT_HASH_ALGORITHM : hashAlgorithm.trim();
     this.hashType = hashType == null ? "" : hashType.trim();
     this.command = isBlank(command) ? DEFAULT_COMMAND : command.trim();
     this.version = version == null ? "" : version.trim();
     this.orderType = orderType == null ? "" : orderType.trim();
+    // Ruling B: hash rong -> TU CHON theo phien ban API. Phai gan command/
+    // version truoc khi tinh vi isApi21() doc tu hai field nay.
+    this.hashAlgorithm =
+        isBlank(hashAlgorithm)
+            ? (isApi21(this.command, this.version)
+                ? DEFAULT_HASH_ALGORITHM_API21
+                : DEFAULT_HASH_ALGORITHM_LEGACY)
+            : hashAlgorithm.trim();
   }
 
   /**
    * Ctor đầy đủ (8 tham số) — giữ tương thích với code cũ: lệnh / phiên bản /
-   * danh mục hàng hoá lấy mặc định (API cũ {@code pay_web}).
+   * danh mục hàng hoá lấy mặc định (API 2.1.0 {@code pay}).
+   *
+   * <p>Thuật toán lấy theo tham số truyền vào — ctor rút gọn GIỮ NGUYÊN hành vi
+   * cũ, không tự chọn theo phiên bản như ctor của Spring.
    */
   public VnpayConfig(
       boolean enabled,
@@ -162,8 +192,13 @@ public class VnpayConfig {
 
   /**
    * Ctor rút gọn — dùng 4 giá trị VNPay cơ bản, còn lại lấy mặc định
-   * (gateway sandbox + HMAC-SHA256 + API cũ {@code pay_web}). Tiện cho test và
-   * cho code gọi nhanh.
+   * (gateway sandbox API 2.1.0 + HMAC-SHA256). Tiện cho test và cho code gọi
+   * nhanh.
+   *
+   * <p>Giữ nguyên hành vi cũ: ghim {@code HmacSHA256} (KHÔNG tự chọn theo phiên
+   * bản như ctor của Spring) ⇒ bộ vector chữ ký SHA256 của API cũ trong test
+   * vẫn dùng được. Production dùng ctor của Spring (hash rỗng ⇒ tự chọn
+   * SHA512 cho API 2.1.0).
    */
   public VnpayConfig(
       boolean enabled, String tmnCode, String hashSecret, String returnUrl, String ipnUrl) {
@@ -300,11 +335,22 @@ public class VnpayConfig {
    *
    * <p>Nhận ra qua {@code vnp_Command=pay} hoặc {@code vnp_Version=2.1.x} —
    * hai bộ giao thức khác nhau: API 2.1.0 bắt buộc {@code vnp_Version} +
-   * {@code vnp_OrderType}, CẤM gửi {@code vnp_SecureHashType}, và báo thành
-   * công bằng {@code vnp_TransactionStatus=00} (API cũ dùng {@code 01}).
+   * {@code vnp_OrderType}, CẤM gửi {@code vnp_SecureHashType}, ký bằng
+   * HMAC-SHA512 và báo thành công bằng {@code vnp_TransactionStatus=00}
+   * (API cũ dùng {@code 01}).
    */
   public boolean isApi21() {
-    return "pay".equalsIgnoreCase(command) || version.startsWith("2.1");
+    return isApi21(command, version);
+  }
+
+  /**
+   * Bản STATIC của {@link #isApi21()} — dùng được trong constructor TRƯỚC khi
+   * field {@code command}/{@code version} được gán (dùng để chọn thuật toán
+   * chữ ký theo phiên bản API).
+   */
+  private static boolean isApi21(String command, String version) {
+    return "pay".equalsIgnoreCase(command)
+        || (version != null && version.startsWith("2.1"));
   }
 
   /**

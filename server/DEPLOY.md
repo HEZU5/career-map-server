@@ -55,28 +55,39 @@ Trong Render Dashboard:
 
 VNPay có HAI bộ giao thức khác nhau. Chúng KHÔNG chỉ khác ở URL:
 
-| | API CŨ (mặc định) | API MỚI 2.1.0 |
+| | API 2.1.0 (mặc định) | API CŨ (đã bị thu hồi) |
 |---|---|---|
-| URL gateway | `https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm` | `https://sandbox.vnpayment.vn/paymentv2/vpcpay.html` |
-| `vnp_Command` | `pay_web` | `pay` |
-| `vnp_Version` | không gửi | **bắt buộc** `2.1.0` |
-| `vnp_OrderType` | không gửi | **bắt buộc** (ví dụ `other`) |
-| `vnp_SecureHashType` | được gửi (2.0.x) | **KHÔNG được gửi** (tài liệu VNPay) |
-| Thuật toán chữ ký | HMAC-SHA256 | HMAC-SHA512 |
-| `vnp_TransactionStatus` báo THÀNH CÔNG | `01` | `00` |
+| URL gateway | `https://sandbox.vnpayment.vn/paymentv2/vpcpay.html` | `https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm` |
+| `vnp_Command` | `pay` | `pay_web` |
+| `vnp_Version` | **bắt buộc** `2.1.0` | không gửi |
+| `vnp_OrderType` | **bắt buộc** (mặc định `other`) | không gửi |
+| `vnp_SecureHashType` | **KHÔNG được gửi** (tài liệu VNPay) | được gửi (2.0.x) |
+| Thuật toán chữ ký | HMAC-SHA512 | HMAC-SHA256 |
+| `vnp_TransactionStatus` báo THÀNH CÔNG | `00` | `01` |
+| `vnp_IpAddr` | **bắt buộc** (thiếu ⇒ gateway từ chối) | tuỳ chọn |
+
+> **API CŨ ĐÃ CHẾT.** `paymentgateway/paymenturl.htm` trả HTTP 404 (VNPay đã
+> thu hồi) ⇒ mặc định của server đã chuyển sang API 2.1.0. Muốn quay lại
+> API cũ thì phải đặt ĐỦ bộ biến cũ (xem bảng bên dưới).
 
 | Key | Mặc định | Khi nào đổi |
 |---|---|---|
-| `VNPAY_BASE_URL` | `https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm` | URL gateway (sandbox ⇄ production) |
-| `VNPAY_COMMAND` | `pay_web` | `pay` khi dùng API 2.1.0 |
-| `VNPAY_VERSION` | *(rỗng = không gửi)* | `2.1.0` khi dùng API 2.1.0 |
-| `VNPAY_ORDER_TYPE` | *(rỗng = không gửi)* | ví dụ `other` khi dùng API 2.1.0 |
-| `VNPAY_HASH_ALGORITHM` | `HmacSHA256` | `SHA512` khi dùng API 2.1.0 |
+| `VNPAY_BASE_URL` | `https://sandbox.vnpayment.vn/paymentv2/vpcpay.html` | URL gateway (sandbox ⇄ production) |
+| `VNPAY_COMMAND` | `pay` | `pay_web` khi dùng API cũ |
+| `VNPAY_VERSION` | `2.1.0` | *(rỗng = không gửi)* khi dùng API cũ |
+| `VNPAY_ORDER_TYPE` | `other` | *(rỗng = không gửi)* khi dùng API cũ |
+| `VNPAY_HASH_ALGORITHM` | *(rỗng = tự chọn theo phiên bản: 2.1.0 ⇒ SHA512, API cũ ⇒ SHA256)* | chỉ đặt khi cần ghim thuật toán |
 | `VNPAY_HASH_TYPE` | *(rỗng = không gửi)* | `SHA256`/`SHA512` cho API 2.0.x. **Để rỗng khi dùng API 2.1.0** |
 
 Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
 
-> **Chuyển sang API 2.1.0 = đổi CẢ BỘ biến, KHÔNG phải đổi 1 biến.**
+> **Mặc định mới ĐÃ ĐÚNG — KHÔNG cần đặt thêm biến.** Server tự chọn
+> HMAC-SHA512 khi đang ở API 2.1.0 và tự bỏ `vnp_SecureHashType`. Nhưng nếu
+> Render đang CÓ sẵn biến cũ (`VNPAY_BASE_URL` trỏ `paymentgateway/...`,
+> `VNPAY_COMMAND=pay_web`, `VNPAY_HASH_ALGORITHM=HmacSHA256`) thì phải XOÁ
+> chúng, nếu không server vẫn dùng bộ tham số cũ ⇒ 404 / sai chữ ký.
+>
+> Chuyển sang API 2.1.0 = đổi CẢ BỘ biến, KHÔNG phải đổi 1 biến.
 > Thiếu `vnp_Version`/`vnp_OrderType` ⇒ gateway từ chối đơn. Gửi thừa
 > `vnp_SecureHashType` ở 2.1.0 ⇒ lệch bộ tham số mà gateway dùng để tính
 > hash ⇒ đơn bị từ chối. Server đã tự chặn 2 trường hợp sai này (thiếu
@@ -93,15 +104,22 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
 
 1. **Phải chạy 1 giao dịch THẬT trên sandbox** để xác nhận gateway chấp nhận
    chữ ký. Nếu gateway báo lỗi chữ ký:
-   - kiểm tra `vnp_SecureHash` trong payUrl có đúng 64 hex (API cũ) hay 128 hex
-     (API 2.1.0) không;
-   - kiểm tra `VNPAY_HASH_ALGORITHM` có khớp bộ giao thức không;
+   - kiểm tra `vnp_SecureHash` trong payUrl có đúng 128 hex (API 2.1.0) hay
+     64 hex (API cũ) không;
+   - kiểm tra `VNPAY_HASH_ALGORITHM` có khớp bộ giao thức không (để trống ⇒ tự
+     chọn theo phiên bản: 2.1.0 ⇒ SHA512);
    - **đừng đổi lệch một biến**: xem bảng ở §2.3.
 2. Kiểm tra `vnp_ReturnUrl` trong payUrl (mở payUrl, xem query string) có trỏ
    về `/ket-qua-thanh-toan` không.
-3. Kiểm tra log Render có dòng `[FINISH] phong=...` khi kết thúc ván, và có log
+3. Kiểm tra payUrl có ĐỦ tham số bắt buộc của API 2.1.0 không:
+   `vnp_Version=2.1.0`, `vnp_Command=pay`, `vnp_OrderType=other`, `vnp_IpAddr`
+   (thiếu `vnp_IpAddr` là gateway trả "Dữ liệu gửi sang không đúng định dạng"),
+   `vnp_TmnCode`, `vnp_TxnRef`, `vnp_Amount`, `vnp_CurrCode`, `vnp_CreateDate`,
+   `vnp_OrderInfo`, `vnp_ReturnUrl`, `vnp_Locale` — và KHÔNG có
+   `vnp_SecureHashType`.
+4. Kiểm tra log Render có dòng `[FINISH] phong=...` khi kết thúc ván, và có log
    IPN (`IPN xử lý thất bại...`) khi VNPay gọi.
-4. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
+5. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
    dựa trên `RspCode` TRONG BODY (không phải HTTP status):
    - `00`, `02` ⇒ kết thúc luồng;
    - `01`, `04`, `97`, `99` hoặc timeout ⇒ VNPay retry tối đa 10 lần, cách nhau
@@ -122,9 +140,9 @@ curl -i https://<server>.onrender.com/health
 curl -i https://<server>.onrender.com/api/game/config
 curl -i -X POST https://<server>.onrender.com/api/payments/ipn \
      -H 'Content-Type: application/x-www-form-urlencoded' \
-     --data 'vnp_TxnRef=khong-ton-tai&vnp_TransactionStatus=01&vnp_Amount=5000000&vnp_SecureHash=sai'
+     --data 'vnp_TxnRef=khong-ton-tai&vnp_TransactionStatus=00&vnp_Amount=5000000&vnp_SecureHash=sai'
 # API 2.1.0 gọi IPN bằng GET:
-curl -i 'https://<server>.onrender.com/api/payments/ipn?vnp_TxnRef=khong-ton-tai&vnp_TransactionStatus=01&vnp_Amount=5000000&vnp_SecureHash=sai'
+curl -i 'https://<server>.onrender.com/api/payments/ipn?vnp_TxnRef=khong-ton-tai&vnp_TransactionStatus=00&vnp_Amount=5000000&vnp_SecureHash=sai'
 ```
 
 Lệnh IPN cuối phải trả **HTTP 200** với `{"RspCode":"97",...}` (chữ ký sai) -

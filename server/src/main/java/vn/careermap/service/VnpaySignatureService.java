@@ -12,11 +12,16 @@ import org.springframework.stereotype.Service;
 import vn.careermap.config.VnpayConfig;
 
 /**
- * Ký đơn thanh toán VNPay bằng HMAC (mặc định HMAC-SHA256).
+ * Ký đơn thanh toán VNPay bằng HMAC — API 2.1.0 dùng HMAC-SHA512, API cũ dùng
+ * HMAC-SHA256 (thuật toán lấy theo cấu hình {@code vnpay.hash-algorithm}).
  *
  * <p>Thuật toán (bất biến, không đổi):
  * <ol>
  *   <li>Bỏ {@code vnp_SecureHash} khỏi danh sách (chữ ký cũ của người khác).</li>
+ *   <li>Bỏ {@code vnp_SecureHashType}: API 2.1.0 KHÔNG gửi tham số này và IPN
+ *       2.1.0 có thể kèm nó — mẫu chính thức của VNPay loại nó khỏi danh sách
+ *       trước khi băm. Băm kèm nó mà VNPay không băm kèm ⇒ IPN bị từ chối
+ *       ({@code RspCode=97}) ⇒ đơn kẹt PENDING ⇒ người chơi mất tiền.</li>
  *   <li>Bỏ tham số giá trị null hoặc rỗng.</li>
  *   <li>Sắp xếp key theo alphabet (TreeMap order).</li>
  *   <li>URL-encode <b>CẢ key lẫn value</b> (UTF-8, {@code URLEncoder}).</li>
@@ -37,12 +42,16 @@ import vn.careermap.config.VnpayConfig;
  *
  * <p>Vì sao thuật toán nằm trong cấu hình: tài liệu VNPay hiện hành mô tả API
  * mới {@code paymentv2/vpcpay.html} dùng <b>HMAC-SHA512</b> (hash 128 hex ký
- * tự), còn API cũ {@code paymentgateway/paymenturl.htm} dùng SHA256.
+ * tự) và <b>KHÔNG</b> gửi {@code vnp_SecureHashType}, còn API cũ
+ * {@code paymentgateway/paymenturl.htm} dùng SHA256.
  */
 @Service
 public class VnpaySignatureService {
 
   private static final String SECURE_HASH_KEY = "vnp_SecureHash";
+
+  /** Tham số kiểu hash — API 2.1.0 KHÔNG gửi, và IPN 2.1.0 có thể kèm. KHÔNG băm kèm. */
+  private static final String SECURE_HASH_TYPE_KEY = "vnp_SecureHashType";
 
   private final VnpayConfig config;
 
@@ -53,8 +62,8 @@ public class VnpaySignatureService {
   /**
    * Chữ ký hex lowercase của các tham số đã được chuẩn hoá.
    *
-   * @param params các tham số {@code vnp_*}; {@code vnp_SecureHash} và giá trị
-   *               null/rỗng tự bị bỏ
+   * @param params các tham số {@code vnp_*}; {@code vnp_SecureHash},
+   *               {@code vnp_SecureHashType} và giá trị null/rỗng tự bị bỏ
    * @return hex HMAC theo {@code vnpay.hash-algorithm} (64 ký tự với SHA256,
    *         128 ký tự với SHA512)
    */
@@ -90,6 +99,9 @@ public class VnpaySignatureService {
    * hàm dùng để tính hash ({@link #canonical}). Bất biến của VNPay: <b>dạng
    * dùng để hash phải bằng dạng dùng trong query</b>; lệch một ký tự encode là
    * gateway từ chối đơn và IPN trả {@code RspCode=97}.
+   *
+   * <p>{@code vnp_SecureHashType} KHÔNG có trong query (API 2.1.0 không gửi
+   * tham số này) — xem {@link #SECURE_HASH_TYPE_KEY}.
    */
   public String signedQueryString(Map<String, String> params) {
     StringBuilder sb = new StringBuilder();
@@ -116,6 +128,7 @@ public class VnpaySignatureService {
   private static List<Map.Entry<String, String>> sortedEntries(Map<String, String> params) {
     return params.entrySet().stream()
         .filter(e -> !e.getKey().equals(SECURE_HASH_KEY))
+        .filter(e -> !e.getKey().equals(SECURE_HASH_TYPE_KEY))
         .filter(e -> e.getValue() != null && !e.getValue().isEmpty())
         .sorted(Map.Entry.comparingByKey())
         .toList();

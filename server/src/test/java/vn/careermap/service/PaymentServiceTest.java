@@ -114,12 +114,14 @@ class PaymentServiceTest {
     assertThat(response.expiresAt()).isEqualTo(order.getExpiresAt());
 
     assertThat(response.payUrl())
-        .startsWith("https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm?");
+        .startsWith("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?");
     assertThat(response.payUrl()).contains("vnp_TxnRef=" + order.getId());
     assertThat(response.payUrl()).contains("vnp_Amount=5000000");
     assertThat(response.payUrl()).contains("vnp_CurrCode=VND");
     assertThat(response.payUrl()).contains("vnp_Locale=vn");
-    assertThat(response.payUrl()).contains("vnp_Command=pay_web");
+    assertThat(response.payUrl()).contains("vnp_Command=pay");
+    assertThat(response.payUrl()).contains("vnp_Version=2.1.0");
+    assertThat(response.payUrl()).contains("vnp_OrderType=other");
   }
 
   @Test
@@ -526,9 +528,15 @@ class PaymentServiceTest {
     assertThat(response.payUrl()).contains("vnp_IpAddr=203.0.113.7");
   }
 
-  /** Không có IP client thì KHÔNG gửi {@code vnp_IpAddr} (giá trị rỗng bị lọc khỏi chữ ký). */
+  /**
+   * API 2.1.0 coi {@code vnp_IpAddr} là tham số BẮT BUỘC: thiếu nó ⇒ gateway
+   * trả "Dữ liệu gửi sang không đúng định dạng" ⇒ đơn bị từ chối.
+   *
+   * <p>Vì vậy khi không đọc được IP client thì dùng fallback {@code 127.0.0.1}
+   * (giá trị IP trong mẫu chính thức của VNPay) — KHÔNG được bỏ hẳn tham số.
+   */
   @Test
-  void payUrlKhongCoIpAddrKhiKhongBietIp() {
+  void payUrlFallbackIpAddrKhiKhongBietIp() {
     when(playerRepository.findByPlayerKey("noip"))
         .thenReturn(Optional.of(player("noip", 1, 12)));
     when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
@@ -540,12 +548,13 @@ class PaymentServiceTest {
 
     CreatePaymentResponse response = service.createOrder("noip", "");
 
-    assertThat(response.payUrl()).doesNotContain("vnp_IpAddr");
+    assertThat(response.payUrl()).contains("vnp_IpAddr=127.0.0.1");
   }
 
   /**
    * Header {@code X-Forwarded-For} do CLIENT kiểm soát ⇒ ký tự lạ không được
-   * lọt vào {@code vnp_IpAddr} (và vào cả chữ ký). IP sai dạng ⇒ bỏ tham số.
+   * lọt vào {@code vnp_IpAddr} (và vào cả chữ ký). IP sai dạng ⇒ dùng fallback
+   * {@code 127.0.0.1} (vẫn phải CÓ tham số — API 2.1.0 bắt buộc).
    */
   @Test
   void payUrlLoaiKyTuLaTrongIpAddr() {
@@ -559,7 +568,7 @@ class PaymentServiceTest {
 
     CreatePaymentResponse response = service.createOrder("ip2", "203.0.113.7<script>");
 
-    assertThat(response.payUrl()).doesNotContain("vnp_IpAddr");
+    assertThat(response.payUrl()).contains("vnp_IpAddr=127.0.0.1");
     assertThat(response.payUrl()).doesNotContain("script");
   }
 
@@ -605,11 +614,102 @@ class PaymentServiceTest {
 
     assertThat(response.payUrl())
         .startsWith("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?");
-    assertThat(response.payUrl()).contains("vnp_SecureHashType=SHA512");
+    // API 2.1.0 (vnp_Command=pay) KHÔNG được gửi vnp_SecureHashType dù biến
+    // môi trường có đặt — gateway 2.1.0 tự tính hash theo HMAC-SHA512.
+    assertThat(response.payUrl()).doesNotContain("vnp_SecureHashType");
     // SHA512 -> hash 128 hex ky tu.
     Map<String, String> params = parseQuery(response.payUrl());
     String hash = params.remove("vnp_SecureHash");
     assertThat(hash).hasSize(128);
+  }
+
+  // ── Bộ giao thức API 2.1.0 (giống production) ─────────────────────────────
+
+  /**
+   * Cấu hình GIỐNG HỆT production: base/command/version/order-type lấy mặc
+   * định (API 2.1.0) và {@code hash-algorithm} để RỖNG ⇒
+   * {@link VnpayConfig} tự chọn HMAC-SHA512 theo phiên bản API (Ruling B).
+   */
+  private static VnpayConfig api21Config() {
+    return new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "",
+        VnpayConfig.DEFAULT_COMMAND, VnpayConfig.DEFAULT_VERSION, VnpayConfig.DEFAULT_ORDER_TYPE);
+  }
+
+  /**
+   * API 2.1.0 ký bằng HMAC-SHA512 ⇒ {@code vnp_SecureHash} dài 128 hex (API cũ
+   * SHA256 chỉ 64 hex). Gateway báo "Sai chữ ký" nếu thuật toán lệch.
+   */
+  @Test
+  void chuKyApi21Dai128Hex() {
+    VnpayConfig api21 = api21Config();
+    PaymentService api21Service = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(api21),
+        api21);
+    when(playerRepository.findByPlayerKey("sha512"))
+        .thenReturn(Optional.of(player("sha512", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "sha512", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = api21Service.createOrder("sha512", "203.0.113.7");
+
+    Map<String, String> params = parseQuery(response.payUrl());
+    String hash = params.remove("vnp_SecureHash");
+    assertThat(hash).hasSize(128).matches("[0-9a-f]{128}");
+  }
+
+  /**
+   * payUrl của API 2.1.0 phải có ĐỦ tham số bắt buộc — thiếu bất kỳ tham số
+   * nào thì gateway trả "Dữ liệu gửi sang không đúng định dạng" và từ chối đơn.
+   *
+   * <p>Đây là bộ tham số đã dò thực tế trên sandbox: thiếu {@code vnp_IpAddr}
+   * cũng bị từ chối y như vậy.
+   */
+  @Test
+  void payUrlApi21CoDayDuThamSoBatBuoc() {
+    VnpayConfig api21 = api21Config();
+    PaymentService api21Service = new PaymentService(
+        RULES,
+        playerRepository,
+        orderRepository,
+        gameService,
+        new VnpaySignatureService(api21),
+        api21);
+    when(playerRepository.findByPlayerKey("daydu"))
+        .thenReturn(Optional.of(player("daydu", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "daydu", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    // KHÔNG truyền IP client -> vnp_IpAddr vẫn phải có mặt (fallback).
+    CreatePaymentResponse response = api21Service.createOrder("daydu");
+
+    assertThat(response.payUrl())
+        .startsWith("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?");
+    assertThat(response.payUrl()).contains("vnp_Version=2.1.0");
+    assertThat(response.payUrl()).contains("vnp_Command=pay");
+    assertThat(response.payUrl()).contains("vnp_OrderType=other");
+    assertThat(response.payUrl()).contains("vnp_IpAddr=127.0.0.1");
+    assertThat(response.payUrl()).contains("vnp_Locale=vn");
+    assertThat(response.payUrl()).contains("vnp_CreateDate=");
+    assertThat(response.payUrl()).contains("vnp_OrderInfo=");
+    assertThat(response.payUrl()).contains("vnp_ReturnUrl=");
+    assertThat(response.payUrl()).contains("vnp_Amount=5000000");
+    assertThat(response.payUrl()).contains("vnp_CurrCode=VND");
+    assertThat(response.payUrl()).contains("vnp_TxnRef=");
+    assertThat(response.payUrl()).contains("vnp_TmnCode=TMNCODE");
+    // API 2.1.0 KHÔNG được gửi vnp_SecureHashType.
+    assertThat(response.payUrl()).doesNotContain("vnp_SecureHashType");
   }
 
   /**

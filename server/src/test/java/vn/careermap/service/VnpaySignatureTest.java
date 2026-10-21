@@ -12,7 +12,12 @@ import org.junit.jupiter.api.Test;
 import vn.careermap.config.VnpayConfig;
 
 /**
- * Chữ ký VNPay là HMAC-SHA256 (API cũ) — khoá là {@code HashSecret}.
+ * Chữ ký VNPay là HMAC — SHA256 (API cũ) hoặc SHA512 (API 2.1.0) — khoá là
+ * {@code HashSecret}.
+ *
+ * <p>Các vector SHA256 dưới đây là vector của API CŨ: fixture {@code config}
+ * dùng ctor rút gọn, ctor rút gọn GIỮ NGUYÊN hành vi cũ (ghim SHA256).
+ * Bộ giao thức API 2.1.0 (SHA512) được kiểm ở {@link #chuKyApi21Sha512DungDungChuoiDaGuiLenGateway()}.
  *
  * <p><b>QUAN TRỌNG — vì sao test này KHÔNG tự verify bằng chính
  * implementation:</b> lỗi chí mạng của wave trước (hash trên giá trị THÔ
@@ -51,6 +56,20 @@ class VnpaySignatureTest {
       return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
     } catch (Exception e) {
       throw new AssertionError("Không tính được HMAC-SHA256 trong test", e);
+    }
+  }
+
+  /**
+   * HMAC-SHA512 viết TAY trong test — dùng để kiểm chứng bộ giao thức API
+   * 2.1.0 mà KHÔNG tin vào chính implementation cần kiểm.
+   */
+  private static String hmacSha512Hex(String secret, String data) {
+    try {
+      Mac mac = Mac.getInstance("HmacSHA512");
+      mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA512"));
+      return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
+    } catch (Exception e) {
+      throw new AssertionError("Không tính được HMAC-SHA512 trong test", e);
     }
   }
 
@@ -249,5 +268,82 @@ class VnpaySignatureTest {
     assertThat(VnpaySignatureService.normalizeAlgorithm("SHA256")).isEqualTo("HmacSHA256");
     assertThat(VnpaySignatureService.normalizeAlgorithm("")).isEqualTo("HmacSHA256");
     assertThat(VnpaySignatureService.normalizeAlgorithm(null)).isEqualTo("HmacSHA256");
+  }
+
+  // ── Ruling C: vnp_SecureHashType KHÔNG được ký ─────────────────────────────
+
+  /**
+   * {@code vnp_SecureHashType} KHÔNG được tham gia tính chữ ký.
+   *
+   * <p>Vì sao: IPN của API 2.1.0 có thể kèm {@code vnp_SecureHashType}, còn
+   * mẫu chính thức của VNPay loại nó khỏi {@code fields} trước khi băm. Nếu ta
+   * băm kèm nó mà VNPay không băm kèm ⇒ IPN bị từ chối ({@code RspCode=97}) ⇒
+   * đơn kẹt PENDING ⇒ người chơi mất tiền.
+   *
+   * <p>Khẳng định bằng CÁCH BẰNG: cùng bộ tham số, có/không có
+   * {@code vnp_SecureHashType} ⇒ chữ ký phải GIỐNG HỆT.
+   */
+  @Test
+  void secureHashTypeKhongDuocBam() {
+    Map<String, String> coHashType = new LinkedHashMap<>();
+    coHashType.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    coHashType.put("vnp_Amount", "5000000");
+    coHashType.put("vnp_SecureHashType", "SHA256");
+
+    Map<String, String> khongHashType = new LinkedHashMap<>();
+    khongHashType.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    khongHashType.put("vnp_Amount", "5000000");
+
+    assertThat(signatureService.sign(coHashType))
+        .isEqualTo(signatureService.sign(khongHashType));
+    // Và chuỗi băm phải là đúng canonical không có vnp_SecureHashType.
+    assertThat(signatureService.sign(coHashType))
+        .isEqualTo(
+            hmacSha256Hex(SECRET, "vnp_Amount=5000000&vnp_TxnRef=0123456789abcdef0123456789abcdef"));
+  }
+
+  /** Tham số kiểu hash cũng không được đưa vào QUERY gửi lên gateway. */
+  @Test
+  void signedQueryStringKhongChuaSecureHashType() {
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    params.put("vnp_SecureHashType", "SHA256");
+
+    assertThat(signatureService.signedQueryString(params)).doesNotContain("vnp_SecureHashType");
+  }
+
+  // ── API 2.1.0: HMAC-SHA512 ────────────────────────────────────────────────
+
+  /**
+   * API 2.1.0 ký bằng HMAC-SHA512 và chữ ký phải khớp ĐÚNG chuỗi query gửi
+   * lên gateway (bất biến cốt lõi của VNPay).
+   *
+   * <p>Cấu hình ở đây giống production: {@code hash-algorithm} RỖNG ⇒ tự chọn
+   * theo phiên bản API ⇒ SHA512.
+   */
+  @Test
+  void chuKyApi21Sha512DungDungChuoiDaGuiLenGateway() {
+    VnpayConfig api21 = new VnpayConfig(
+        true, "TMNCODE", SECRET, "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "", "pay", "2.1.0", "other");
+    VnpaySignatureService service = new VnpaySignatureService(api21);
+
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    params.put("vnp_Amount", "5000000");
+    params.put("vnp_Command", "pay");
+    params.put("vnp_Version", "2.1.0");
+    params.put("vnp_OrderType", "other");
+    params.put("vnp_IpAddr", "203.0.113.7");
+
+    String query = service.signedQueryString(params);
+    int marker = query.lastIndexOf("&vnp_SecureHash=");
+    assertThat(marker).isGreaterThan(0);
+    String sentToGateway = query.substring(0, marker);
+    String hashInQuery = query.substring(marker + "&vnp_SecureHash=".length());
+
+    // SHA512 -> 128 hex ky tu.
+    assertThat(hashInQuery).hasSize(128).matches("[0-9a-f]{128}");
+    assertThat(hmacSha512Hex(SECRET, sentToGateway)).isEqualTo(hashInQuery);
   }
 }
