@@ -599,7 +599,7 @@ public class PaymentService {
                 + "lệch chữ ký đã được sửa thì một lần retry sau có thể thành công; "
                 + "nếu không, đơn sẽ hết hạn (EXPIRED) dù tiền đã vào. "
                 + "Tham số nhận được (chữ ký tính trên các tham số CÓ GIÁ TRỊ, BỎ QUA "
-                + "vnp_SecureHash và vnp_SecureHashType): {}",
+                + "vnp_SecureHash, vnp_SecureHashType và vnp_IpnUrl): {}",
             // Mã đơn cũng phải qua hàm che/escape/cắt: endpoint IPN công khai,
             // không xác thực ⇒ vnp_TxnRef do bất kỳ ai kiểm soát được ⇒ in THÔ
             // là mời chèn dòng log giả (log injection).

@@ -11,9 +11,12 @@ import static org.mockito.Mockito.when;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
@@ -88,6 +91,38 @@ class PaymentServiceTest {
   private static void assertForbidden(Throwable thrown) {
     assertThat(thrown).isInstanceOf(ResponseStatusException.class);
     assertThat(((ResponseStatusException) thrown).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  /**
+   * HMAC-SHA512 viết TAY trong test — độc lập với {@link VnpaySignatureService}
+   * cần kiểm (không tin vào chính implementation cần kiểm).
+   */
+  private static String hmacSha512Hex(String secret, String data) {
+    try {
+      Mac mac = Mac.getInstance("HmacSHA512");
+      mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA512"));
+      return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
+    } catch (Exception e) {
+      throw new AssertionError("Không tính được HMAC-SHA512 trong test", e);
+    }
+  }
+
+  /**
+   * Bỏ MỘT cặp {@code key=value} ra khỏi chuỗi query (giữ nguyên phần còn
+   * lại, kể cả dấu {@code &}).
+   */
+  private static String removeParam(String query, String key) {
+    StringBuilder sb = new StringBuilder();
+    for (String pair : query.split("&")) {
+      if (pair.startsWith(key + "=")) {
+        continue;
+      }
+      if (sb.length() > 0) {
+        sb.append('&');
+      }
+      sb.append(pair);
+    }
+    return sb.toString();
   }
 
   @Test
@@ -743,6 +778,44 @@ class PaymentServiceTest {
     // Giá trị phải là IPN URL đã cấu hình (URL-encode trong query).
     Map<String, String> params = parseQuery(response.payUrl());
     assertThat(params.get("vnp_IpnUrl")).isEqualTo("https://app.example/ipn");
+  }
+
+  /**
+   * payUrl THẬT (đường đi production): query CÓ {@code vnp_IpnUrl} nhưng chữ
+   * ký được băm trên query <b>BỎ {@code vnp_IpnUrl}</b> — đúng quy tắc
+   * gateway VNPay 2.1.0.
+   *
+   * <p>Vì sao phải khoá bằng test: nếu ai đó băm kèm {@code vnp_IpnUrl} thì
+   * chữ ký lệch ⇒ gateway từ chối đơn với "Sai chữ ký" ⇒ mọi đơn hỏng.
+   * Nếu ai đó bỏ {@code vnp_IpnUrl} khỏi query thì mất IPN ⇒ đơn treo
+   * PENDING ⇒ hết 15 phút thành EXPIRED dù người chơi đã trả tiền.
+   */
+  @Test
+  void payUrlBamTrenQueryThieuVnpIpnUrl() {
+    when(playerRepository.findByPlayerKey("ipnhash"))
+        .thenReturn(Optional.of(player("ipnhash", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "ipnhash", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("ipnhash");
+
+    String query = response.payUrl().substring(response.payUrl().indexOf('?') + 1);
+    int marker = query.lastIndexOf("&vnp_SecureHash=");
+    assertThat(marker).isGreaterThan(0);
+    String sentToGateway = query.substring(0, marker);
+    String hashInQuery = query.substring(marker + "&vnp_SecureHash=".length());
+
+    // Query gửi lên gateway VAN CO vnp_IpnUrl.
+    assertThat(sentToGateway).contains("vnp_IpnUrl=https%3A%2F%2Fapp.example%2Fipn");
+    // Nhung chuoi bam la query BO vnp_IpnUrl di.
+    String hashData = removeParam(sentToGateway, "vnp_IpnUrl");
+    assertThat(hashData).doesNotContain("vnp_IpnUrl");
+    assertThat(hmacSha512Hex("secret", hashData)).isEqualTo(hashInQuery);
+    // Bam ca vnp_IpnUrl thi KHONG khop (dung loi da lam hong production).
+    assertThat(hmacSha512Hex("secret", sentToGateway)).isNotEqualTo(hashInQuery);
   }
 
   /**

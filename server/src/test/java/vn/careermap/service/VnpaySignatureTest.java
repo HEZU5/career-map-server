@@ -380,6 +380,143 @@ class VnpaySignatureTest {
     assertThat(signatureServiceApiCu.signedQueryString(params)).doesNotContain("vnp_SecureHashType");
   }
 
+  // ── API 2.1.0: vnp_IpnUrl KHÔNG được băm (nhưng VẪN được gửi đi) ──────────
+
+  /**
+   * Fixture API 2.1.0 giống production: {@code pay} + {@code 2.1.0} +
+   * {@code other}, {@code hash-algorithm} RỖNG ⇒ tự chọn HMAC-SHA512.
+   */
+  private VnpaySignatureService signatureServiceApi21() {
+    VnpayConfig api21 =
+        new VnpayConfig(
+            true, "TMNCODE", SECRET, "https://app.example/return", "https://app.example/ipn",
+            VnpayConfig.DEFAULT_BASE_URL, "", "", "pay", "2.1.0", "other");
+    return new VnpaySignatureService(api21);
+  }
+
+  /**
+   * Bỏ MỘT cặp {@code key=value} ra khỏi chuỗi query (giữ nguyên phần còn
+   * lại, kể cả dấu {@code &}).
+   */
+  private static String removeParam(String query, String key) {
+    StringBuilder sb = new StringBuilder();
+    for (String pair : query.split("&")) {
+      if (pair.startsWith(key + "=")) {
+        continue;
+      }
+      if (sb.length() > 0) {
+        sb.append('&');
+      }
+      sb.append(pair);
+    }
+    return sb.toString();
+  }
+
+  /**
+   * {@code vnp_IpnUrl} KHÔNG được băm ở API 2.1.0.
+   *
+   * <p>Vì sao: gateway VNPay 2.1.0 <b>KHÔNG băm</b> {@code vnp_IpnUrl} (đã
+   * kiểm chứng thực nghiệm trên sandbox: 31 biến thể, biến thể "gửi
+   * {@code vnp_IpnUrl} nhưng KHÔNG băm" là biến thể DUY NHẤT được gateway
+   * chấp nhận). Code cũ băm kèm nó ⇒ mọi đơn bị gateway từ chối "Sai chữ ký".
+   *
+   * <p>Khẳng định bằng CÁCH BẰNG: cùng bộ tham số, có/không có
+   * {@code vnp_IpnUrl} ⇒ chữ ký phải GIỐNG HỆT; và chữ ký phải bằng đúng
+   * HMAC-SHA512 băm tay trên canonical KHÔNG có {@code vnp_IpnUrl}.
+   */
+  @Test
+  void ipnUrlKhongDuocBamApi21() {
+    VnpaySignatureService service = signatureServiceApi21();
+
+    Map<String, String> coIpnUrl = new LinkedHashMap<>();
+    coIpnUrl.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    coIpnUrl.put("vnp_Amount", "5000000");
+    coIpnUrl.put("vnp_IpnUrl", "https://app.example/ipn");
+
+    Map<String, String> khongIpnUrl = new LinkedHashMap<>();
+    khongIpnUrl.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    khongIpnUrl.put("vnp_Amount", "5000000");
+
+    assertThat(service.sign(coIpnUrl)).isEqualTo(service.sign(khongIpnUrl));
+    assertThat(service.sign(coIpnUrl))
+        .isEqualTo(
+            hmacSha512Hex(SECRET, "vnp_Amount=5000000&vnp_TxnRef=0123456789abcdef0123456789abcdef"));
+  }
+
+  /**
+   * {@code vnp_IpnUrl} VẪN phải có trong QUERY gửi lên gateway.
+   *
+   * <p>Vì sao: loại nó khỏi chuỗi băm KHÔNG đồng nghĩa loại khỏi query —
+   * gateway vẫn cần tham số này để gọi IPN. Lọc ở tầng "dùng chung cho cả
+   * hash lẫn query" là đúng lỗi (mất IPN ⇒ đơn treo PENDING ⇒ hết 15 phút
+   * thành EXPIRED dù người chơi đã trả tiền).
+   */
+  @Test
+  void ipnUrlVanDuocGuiTrongQuery() {
+    VnpaySignatureService service = signatureServiceApi21();
+
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    params.put("vnp_IpnUrl", "https://app.example/ipn");
+
+    assertThat(service.signedQueryString(params))
+        .contains("vnp_IpnUrl=https%3A%2F%2Fapp.example%2Fipn");
+  }
+
+  /**
+   * Test ĐẦY ĐỦ: dựng lại chuỗi băm từ QUERY THẬT rồi so với chữ ký đính
+   * kèm — ở API 2.1.0, chuỗi băm là query BỎ {@code vnp_IpnUrl} đi.
+   *
+   * <p>Đây là bản "đúng bất biến" của API 2.1.0: query gửi đi CÓ
+   * {@code vnp_IpnUrl}, nhưng gateway băm trên query KHÔNG có nó. Băm cả
+   * {@code vnp_IpnUrl} thì chữ ký lệch ⇒ gateway từ chối đơn.
+   */
+  @Test
+  void chuKyApi21KhopQueryThieuVnpIpnUrl() {
+    VnpaySignatureService service = signatureServiceApi21();
+
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    params.put("vnp_Amount", "5000000");
+    params.put("vnp_Command", "pay");
+    params.put("vnp_Version", "2.1.0");
+    params.put("vnp_OrderType", "other");
+    params.put("vnp_IpAddr", "203.0.113.7");
+    params.put("vnp_IpnUrl", "https://app.example/ipn");
+
+    String query = service.signedQueryString(params);
+    int marker = query.lastIndexOf("&vnp_SecureHash=");
+    assertThat(marker).isGreaterThan(0);
+    String sentToGateway = query.substring(0, marker);
+    String hashInQuery = query.substring(marker + "&vnp_SecureHash=".length());
+
+    // Query gửi đi CÓ vnp_IpnUrl ...
+    assertThat(sentToGateway).contains("vnp_IpnUrl=https%3A%2F%2Fapp.example%2Fipn");
+    // ... nhưng chuỗi băm là query BỎ vnp_IpnUrl đi.
+    String hashData = removeParam(sentToGateway, "vnp_IpnUrl");
+    assertThat(hashData).doesNotContain("vnp_IpnUrl");
+    assertThat(hmacSha512Hex(SECRET, hashData)).isEqualTo(hashInQuery);
+    // Băm CẢ vnp_IpnUrl thì KHÔNG khớp — đó chính là lỗi đã làm hỏng production.
+    assertThat(hmacSha512Hex(SECRET, sentToGateway)).isNotEqualTo(hashInQuery);
+  }
+
+  /**
+   * Ở giao thức CŨ (2.0.x) {@code vnp_IpnUrl} CÓ thuộc tập băm — điều kiện
+   * "chỉ loại ở API 2.1.0" phải được khoá lại bằng test.
+   */
+  @Test
+  void ipnUrlDuocBamVoiApiCu() {
+    Map<String, String> coIpnUrl = new LinkedHashMap<>();
+    coIpnUrl.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    coIpnUrl.put("vnp_IpnUrl", "https://app.example/ipn");
+
+    Map<String, String> khongIpnUrl = new LinkedHashMap<>();
+    khongIpnUrl.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+
+    assertThat(signatureServiceApiCu.sign(coIpnUrl))
+        .isNotEqualTo(signatureServiceApiCu.sign(khongIpnUrl));
+  }
+
   // ── API 2.1.0: HMAC-SHA512 ────────────────────────────────────────────────
 
   /**

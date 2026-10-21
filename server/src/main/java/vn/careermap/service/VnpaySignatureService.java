@@ -24,6 +24,13 @@ import vn.careermap.config.VnpayConfig;
  *       2.1.0 có thể kèm nó — mẫu chính thức của VNPay loại nó khỏi danh sách
  *       trước khi băm. Băm kèm nó mà VNPay không băm kèm ⇒ IPN bị từ chối
  *       ({@code RspCode=97}) ⇒ đơn kẹt PENDING ⇒ người chơi mất tiền.</li>
+ *   <li>Bỏ {@code vnp_IpnUrl} — <b>CHỈ Ở API 2.1.0</b>: gateway VNPay 2.1.0
+ *       KHÔNG băm tham số này (đã kiểm chứng thực nghiệm trên sandbox: 31
+ *       biến thể, biến thể "gửi {@code vnp_IpnUrl} nhưng KHÔNG băm" là biến
+ *       thể DUY NHẤT được gateway chấp nhận) nhưng VẪN cần gửi đi trong
+ *       query để gọi IPN. Ở giao thức cũ 2.0.x tham số này CÓ thuộc tập
+ *       băm ⇒ chỉ loại khi đang ở API 2.1.0. Băm kèm nó ở API 2.1.0 ⇒
+ *       gateway từ chối đơn với "Sai chữ ký" ⇒ mọi đơn hỏng.</li>
  *   <li>Bỏ tham số giá trị null hoặc rỗng.</li>
  *   <li>Sắp xếp key theo alphabet (TreeMap order).</li>
  *   <li>URL-encode <b>CẢ key lẫn value</b> (UTF-8, {@code URLEncoder}).</li>
@@ -35,12 +42,21 @@ import vn.careermap.config.VnpayConfig;
  * </ol>
  *
  * <p><b>BẤT BIẾN CỐT LÕI của VNPay:</b> chuỗi dùng để TÍNH HASH phải giống
- * HỆT chuỗi dùng trong QUERY gửi đi. Demo chính thức của VNPay (Java / PHP /
+ * HỆT chuỗi dùng trong QUERY gửi đi, TRỪ đúng những tham số mà CHÍNH GATEWAY
+ * không băm vào ({@code vnp_SecureHash}, {@code vnp_SecureHashType}, và — ở
+ * API 2.1.0 — {@code vnp_IpnUrl}). Demo chính thức của VNPay (Java / PHP /
  * C#) làm đúng như vậy: {@code hashData} và {@code query} đều dùng
  * {@code urlencode(key)=urlencode(value)}. Vì vậy {@link #canonical} và
  * {@link #signedQueryString} PHẢI dùng CHUNG một hàm encode — không được
  * hash trên giá trị thô rồi gửi giá trị đã encode (lỗi này làm mọi giao
  * dịch bị gateway từ chối và mọi IPN bị trả {@code RspCode=97}).
+ *
+ * <p><b>HAI BỘ LỌC TÁCH BIỆT — ĐỪNG GỘP LẠI:</b> {@link #hashEntries} (tập
+ * tham số đi vào chuỗi băm) và {@link #queryEntries} (tập tham số gửi lên
+ * gateway) KHÁC NHAU ở đúng một điểm: {@code vnp_IpnUrl} bị loại khỏi chuỗi
+ * băm ở API 2.1.0 nhưng VẪN được gửi đi trong query. Dùng chung một bộ lọc
+ * cho cả hai ⇒ hoặc mất IPN (đơn treo PENDING ⇒ hết 15 phút thành EXPIRED
+ * dù người chơi đã trả tiền), hoặc chữ ký lệch ⇒ gateway từ chối đơn.
  *
  * <p>Vì sao thuật toán nằm trong cấu hình: tài liệu VNPay hiện hành mô tả API
  * mới {@code paymentv2/vpcpay.html} dùng <b>HMAC-SHA512</b> (hash 128 hex ký
@@ -55,6 +71,18 @@ public class VnpaySignatureService {
   /** Tham số kiểu hash — API 2.1.0 KHÔNG gửi, và IPN 2.1.0 có thể kèm. KHÔNG băm kèm. */
   private static final String SECURE_HASH_TYPE_KEY = "vnp_SecureHashType";
 
+  /**
+   * Tham số IPN — API 2.1.0 KHÔNG băm vào chữ ký (đã kiểm chứng thực nghiệm
+   * trên sandbox: 31 biến thể, biến thể "gửi {@code vnp_IpnUrl} nhưng không
+   * băm" là biến thể DUY NHẤT được gateway chấp nhận) nhưng VẪN phải được
+   * gửi đi trong query (gateway cần nó để gọi IPN).
+   *
+   * <p>Ở giao thức cũ 2.0.x tham số này CÓ thuộc tập băm ⇒ chỉ loại khi đang
+   * ở API 2.1.0. Việc này không ảnh hưởng chiều IPN (IPN không có
+   * {@code vnp_IpnUrl}).
+   */
+  private static final String IPN_URL_KEY = "vnp_IpnUrl";
+
   private final VnpayConfig config;
 
   public VnpaySignatureService(VnpayConfig config) {
@@ -65,7 +93,9 @@ public class VnpaySignatureService {
    * Chữ ký hex lowercase của các tham số đã được chuẩn hoá.
    *
    * @param params các tham số {@code vnp_*}; {@code vnp_SecureHash},
-   *               {@code vnp_SecureHashType} và giá trị null/rỗng tự bị bỏ
+   *               {@code vnp_SecureHashType} và giá trị null/rỗng tự bị bỏ;
+   *               ở API 2.1.0 thêm {@code vnp_IpnUrl} cũng bị bỏ khỏi chuỗi
+   *               băm (nhưng VẪN được gửi đi trong query)
    * @return hex HMAC theo {@code vnpay.hash-algorithm} (64 ký tự với SHA256,
    *         128 ký tự với SHA512)
    */
@@ -75,9 +105,10 @@ public class VnpaySignatureService {
 
   /**
    * Xác minh chữ ký của một bộ tham số IPN: ký lại từ các tham số (bỏ
-   * {@code vnp_SecureHash} và giá trị null/rỗng, sắp xếp alphabet, URL-encode
-   * key + value, nối {@code key=value} bằng {@code &}, HMAC hex lowercase) rồi
-   * so với {@code vnp_SecureHash} nhận được.
+   * {@code vnp_SecureHash}, {@code vnp_SecureHashType} và — ở API 2.1.0 —
+   * {@code vnp_IpnUrl}, cùng các giá trị null/rỗng, sắp xếp alphabet,
+   * URL-encode key + value, nối {@code key=value} bằng {@code &}, HMAC hex
+   * lowercase) rồi so với {@code vnp_SecureHash} nhận được.
    *
    * <p>Tham số IPN tới từ container đã được GIẢI MÃ (Spring decode
    * {@code @RequestParam}); {@link #canonical} encode lại đúng bằng cách VNPay
@@ -120,10 +151,13 @@ public class VnpaySignatureService {
    *
    * <p>{@code vnp_SecureHashType} KHÔNG có trong query (API 2.1.0 không gửi
    * tham số này) — xem {@link #SECURE_HASH_TYPE_KEY}.
+   *
+   * <p>{@code vnp_IpnUrl} VẪN CÓ trong query (gateway cần nó để gọi IPN) dù
+   * ở API 2.1.0 nó KHÔNG được băm vào chữ ký — xem {@link #IPN_URL_KEY}.
    */
   public String signedQueryString(Map<String, String> params) {
     StringBuilder sb = new StringBuilder();
-    for (Map.Entry<String, String> entry : sortedEntries(params)) {
+    for (Map.Entry<String, String> entry : queryEntries(params)) {
       sb.append(encode(entry.getKey())).append('=')
           .append(encode(entry.getValue()))
           .append('&');
@@ -143,10 +177,45 @@ public class VnpaySignatureService {
     return URLEncoder.encode(raw, StandardCharsets.UTF_8);
   }
 
-  private static List<Map.Entry<String, String>> sortedEntries(Map<String, String> params) {
+  /**
+   * Tập tham số ĐƯỢC TÍNH VÀO CHUỖI BĂM ({@code hashData}).
+   *
+   * <p>Loại 3 tham số:
+   *
+   * <ul>
+   *   <li>{@code vnp_SecureHash} — chữ ký của người khác (luôn loại).</li>
+   *   <li>{@code vnp_SecureHashType} — API 2.1.0 không gửi tham số này.</li>
+   *   <li>{@code vnp_IpnUrl} — <b>chỉ ở API 2.1.0</b>: gateway không băm tham
+   *       số này (xem {@link #IPN_URL_KEY}). Ở giao thức cũ 2.0.x tham số này
+   *       CÓ thuộc tập băm ⇒ vẫn phải băm.</li>
+   * </ul>
+   *
+   * <p>KHÁC với {@link #queryEntries}: ở API 2.1.0 tham số {@code vnp_IpnUrl}
+   * vẫn được GỬI đi trong query (xem {@link #signedQueryString}).
+   */
+  private List<Map.Entry<String, String>> hashEntries(Map<String, String> params) {
     return params.entrySet().stream()
-        .filter(e -> !e.getKey().equals(SECURE_HASH_KEY))
-        .filter(e -> !e.getKey().equals(SECURE_HASH_TYPE_KEY))
+        .filter(e -> !SECURE_HASH_KEY.equals(e.getKey()))
+        .filter(e -> !SECURE_HASH_TYPE_KEY.equals(e.getKey()))
+        .filter(e -> !(IPN_URL_KEY.equals(e.getKey()) && config.isApi21()))
+        .filter(e -> e.getValue() != null && !e.getValue().isEmpty())
+        .sorted(Map.Entry.comparingByKey())
+        .toList();
+  }
+
+  /**
+   * Tập tham số ĐƯỢC GỬI LÊN GATEWAY (query).
+   *
+   * <p>Chỉ loại {@code vnp_SecureHash} (chính là chữ ký sẽ gắn vào cuối
+   * query) và {@code vnp_SecureHashType} (API 2.1.0 không được gửi).
+   *
+   * <p>KHÁC với {@link #hashEntries}: {@code vnp_IpnUrl} VẪN được gửi đi
+   * (gateway cần nó để gọi IPN) — chỉ là KHÔNG băm vào chữ ký ở API 2.1.0.
+   */
+  private static List<Map.Entry<String, String>> queryEntries(Map<String, String> params) {
+    return params.entrySet().stream()
+        .filter(e -> !SECURE_HASH_KEY.equals(e.getKey()))
+        .filter(e -> !SECURE_HASH_TYPE_KEY.equals(e.getKey()))
         .filter(e -> e.getValue() != null && !e.getValue().isEmpty())
         .sorted(Map.Entry.comparingByKey())
         .toList();
@@ -158,8 +227,8 @@ public class VnpaySignatureService {
    *
    * <p>Phải giống HỆT phần query gửi đi — xem {@link #signedQueryString}.
    */
-  private static String canonical(Map<String, String> params) {
-    return sortedEntries(params).stream()
+  private String canonical(Map<String, String> params) {
+    return hashEntries(params).stream()
         .map(e -> encode(e.getKey()) + "=" + encode(e.getValue()))
         .collect(Collectors.joining("&"));
   }

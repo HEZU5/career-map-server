@@ -57,9 +57,10 @@ Trong Render Dashboard:
 >   không có hiệu lực ở production).
 > - Giá trị phải **KHÔNG dấu tiếng Việt, KHÔNG khoảng trắng** — giống
 >   `VNPAY_RETURN_URL`.
-> - `vnp_IpnUrl` **vẫn được gửi trong payUrl** (không làm lệch chữ ký vì
->   gateway băm đúng chuỗi query nó nhận, và giữ lại thì không mất IPN nếu
->   VNPay còn tôn trọng) — nhưng **không thay thế** cho việc đăng ký ở terminal.
+> - `vnp_IpnUrl` **vẫn được gửi trong payUrl** (gateway cần nó để gọi IPN) —
+>   nhưng ở API 2.1.0 tham số này **KHÔNG được băm vào chữ ký** (cả ta lẫn
+>   gateway đều loại nó ⇒ chữ ký vẫn khớp, xem §2.3) — và **không thay thế**
+>   cho việc đăng ký ở terminal.
 
 > **`VNPAY_RETURN_URL` KHÔNG kèm query string.** VNPay sẽ append
 > `vnp_Amount`, `vnp_TxnRef`, `vnp_SecureHash` vào URL này. App đã bóc phần
@@ -83,6 +84,28 @@ VNPay có HAI bộ giao thức khác nhau. Chúng KHÔNG chỉ khác ở URL:
 | Thuật toán chữ ký | HMAC-SHA512 | HMAC-SHA256 |
 | `vnp_TransactionStatus` báo THÀNH CÔNG | `00` | `01` |
 | `vnp_IpAddr` | **bắt buộc** (thiếu ⇒ gateway từ chối) | tuỳ chọn |
+| `vnp_IpnUrl` trong chuỗi băm | **KHÔNG băm** (nhưng VẪN gửi đi) | CÓ băm |
+
+> **CÁCH TÍNH CHỮ KÝ (API 2.1.0)** — chuỗi băm = các tham số `vnp_*` **CÓ
+> GIÁ TRỊ**, sắp xếp alphabet, **URL-encode CẢ key lẫn value**, nối
+> `key=value` bằng `&`, HMAC-SHA512 bằng `VNPAY_HASH_SECRET` (128 hex).
+>
+> **BA tham số bị LOẠI khỏi chuỗi băm:**
+>
+> 1. `vnp_SecureHash` — chính là chữ ký (luôn loại).
+> 2. `vnp_SecureHashType` — API 2.1.0 không được gửi tham số này.
+> 3. `vnp_IpnUrl` — **chỉ ở API 2.1.0**. Gateway 2.1.0 **KHÔNG băm** tham số
+>    này (đã kiểm chứng thực nghiệm trên sandbox: dò 31 biến thể `payUrl`,
+>    biến thể "gửi `vnp_IpnUrl` nhưng KHÔNG băm" là biến thể **DUY NHẤT**
+>    được gateway chấp nhận). Ở giao thức cũ 2.0.x tham số này **CÓ** thuộc
+>    tập băm.
+>
+> - `vnp_IpnUrl` **VẪN được gửi đi** trong payUrl (gateway cần nó để gọi IPN)
+>   ⇒ ở API 2.1.0: **chuỗi băm = chuỗi query BỎ cặp `vnp_IpnUrl=...` đi**.
+> - Băm kèm `vnp_IpnUrl` ở API 2.1.0 ⇒ gateway trả **"Sai chữ ký"** ⇒ **mọi
+>   đơn bị từ chối**.
+> - Bỏ hẳn `vnp_IpnUrl` khỏi query ⇒ mất IPN ⇒ đơn treo PENDING ⇒ hết 15
+>   phút thành EXPIRED **dù người chơi đã trả 50.000đ**.
 
 > **API CŨ ĐÃ CHẾT.** `paymentgateway/paymenturl.htm` trả HTTP 404 (VNPay đã
 > thu hồi) ⇒ mặc định của server đã chuyển sang API 2.1.0. Muốn quay lại
@@ -100,7 +123,9 @@ VNPay có HAI bộ giao thức khác nhau. Chúng KHÔNG chỉ khác ở URL:
 Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
 
 > **Mặc định mới ĐÃ ĐÚNG — KHÔNG cần đặt thêm biến.** Server tự chọn
-> HMAC-SHA512 khi đang ở API 2.1.0 và tự bỏ `vnp_SecureHashType`. Nhưng nếu
+> HMAC-SHA512 khi đang ở API 2.1.0, tự bỏ `vnp_SecureHashType` và tự bỏ
+> `vnp_IpnUrl` khỏi **chuỗi băm** (nhưng vẫn gửi `vnp_IpnUrl` đi trong
+> payUrl). Nhưng nếu
 > Render đang CÓ sẵn biến cũ (`VNPAY_BASE_URL` trỏ `paymentgateway/...`,
 > `VNPAY_COMMAND=pay_web`, `VNPAY_HASH_ALGORITHM=HmacSHA256`) thì phải XOÁ
 > chúng, nếu không server vẫn dùng bộ tham số cũ ⇒ 404 / sai chữ ký.
@@ -172,7 +197,8 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
    `vnp_TmnCode`, `vnp_TxnRef`, `vnp_Amount`, `vnp_CurrCode`, `vnp_CreateDate`,
    `vnp_OrderInfo`, `vnp_ReturnUrl`, `vnp_Locale`, `vnp_ExpireDate` (tài liệu
    chính thức ghi `vnp_ExpireDate` là **BẮT BUỘC** cho `vnp_Command=pay`; code
-   ta có gửi ✓) — và KHÔNG có `vnp_SecureHashType`.
+   ta có gửi ✓), `vnp_IpnUrl` (vẫn phải CÓ trong payUrl — xem §2.2) — và KHÔNG
+   có `vnp_SecureHashType`.
 5. Kiểm tra log Render có dòng `[FINISH] phong=...` khi kết thúc ván, và có log
    IPN (`IPN xử lý thất bại...`) khi VNPay gọi.
 6. Nếu đơn **không** chuyển PAID sau khi thanh toán: tìm trong log dòng
@@ -187,8 +213,10 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
    **Cách dựng lại chuỗi băm từ dòng log đó** (đúng thứ tự
    `VnpaySignatureService` dùng khi băm):
 
-   1. Lấy các tham số in trong log, **bỏ `vnp_SecureHash` và
-      `vnp_SecureHashType`**.
+   1. Lấy các tham số in trong log, **bỏ `vnp_SecureHash`,
+      `vnp_SecureHashType` và `vnp_IpnUrl`** — đây là **3 tham số KHÔNG
+      được băm** (xem §2.3). IPN thường không có `vnp_IpnUrl` nhưng nếu có
+      thì vẫn phải bỏ (API 2.1.0).
    2. **BỎ QUA tham số có giá trị RỖNG.** Log in ra dạng `key=` nhưng tham số
       rỗng **KHÔNG** được tính vào chuỗi băm. (Nói cách khác: chữ ký tính trên
       các tham số **CÓ GIÁ TRỊ**, không phải "đúng mọi tham số in ra".)
