@@ -28,6 +28,11 @@ import vn.careermap.domain.TileType;
  * (client để {@code null}). Lá {@code CƠ HỘI 04} dùng tham số {@code
  * targetPlayerKey} chứ không dùng {@code choice}, nên {@code allowedChoices}
  * của nó cũng rỗng.
+ *
+ * <p><b>Lá giả của ô ⭐ ({@link #STAR_CARD_ID}).</b> Ô ⭐ cho +1 Điểm Chiến
+ * thắng. Trước đây ô ⭐ không mở lượt trả lời ⇒ client tự cộng +1 ở máy ⇒
+ * bảng xếp hạng trên server sai. Nay ô ⭐ cũng mở lượt trả lời và server cấp
+ * lá giả này (hiệu ứng NONE, 1 điểm) ⇒ điểm ô sao do server quyết.
  */
 @Component
 public class CardEffectRegistry {
@@ -44,7 +49,32 @@ public class CardEffectRegistry {
   /** Tiền tố mã lá THỬ THÁCH — dùng để tách bộ lá theo loại ô. */
   public static final String CHALLENGE_PREFIX = "THỬ THÁCH ";
 
+  /**
+   * Mã LÁ GIẢ của ô ⭐ — KHÔNG phải một trong 20 lá Cơ hội / Thử thách.
+   *
+   * <p>Ô ⭐ cho +1 Điểm Chiến thắng. Trước đây ô ⭐ KHÔNG mở lượt trả lời
+   * (xem {@code TurnCoordinator#needsAnswerAt}) ⇒ server không hề biết người
+   * chơi dừng ở ô sao ⇒ client phải TỰ cộng +1 ở máy ⇒ <b>bảng xếp hạng trên
+   * server sai</b>.
+   *
+   * <p>Nay ô ⭐ cũng mở lượt trả lời và server cấp lá giả này: hiệu ứng NONE,
+   * 1 điểm — cùng cơ chế "lá do server cấp" với ô Cơ hội / Thử thách, nên
+   * điểm ô sao cũng do server quyết, không có chỗ cho client tự khai.
+   *
+   * <p>Mã KHÔNG có dấu ("SAO") để không lẫn với danh mục 20 lá phía client
+   * ({@code lib/features/game/data/career_cards.dart}).
+   */
+  public static final String STAR_CARD_ID = "SAO";
+
   private final Map<String, CardEffectSpec> specs = new LinkedHashMap<>();
+
+  /**
+   * Lá giả của ô ⭐: không có hiệu ứng phụ, chỉ +1 Điểm Chiến thắng.
+   *
+   * <p>Cố ý KHÔNG nằm trong {@link #specs} ⇒ {@link #cardIds()} vẫn trả về đúng
+   * 20 lá Cơ hội / Thử thách để đối chiếu với danh mục phía client.
+   */
+  private final CardEffectSpec starSpec = new CardEffectSpec(BonusEffect.NONE, 1, Set.of());
 
   /** Bộ lá CƠ HỘI — rút khi người chơi rơi vào ô {@code CHANCE}. */
   private final List<String> chanceDeck = new ArrayList<>();
@@ -103,10 +133,14 @@ public class CardEffectRegistry {
    * {@code Room#getPendingCardId()}); client chỉ hiển thị theo lá server cấp.
    *
    * @param tileType loại ô người chơi vừa rơi vào
-   * @return mã lá (có dấu), hoặc {@code null} nếu ô đó không phải ô thẻ (ô
-   *     RIASEC, ô ⭐, ô START)
+   * @return mã lá (có dấu), {@link #STAR_CARD_ID} cho ô ⭐, hoặc {@code null} nếu
+   *     ô đó không phải ô thẻ (ô RIASEC, ô START)
    */
   public String drawCardFor(TileType tileType) {
+    if (tileType == TileType.STAR) {
+      // Ô ⭐ ⇒ lá GIẢ +1 điểm (không thuộc bộ Cơ hội / Thử thách).
+      return STAR_CARD_ID;
+    }
     List<String> deck = deckFor(tileType);
     if (deck.isEmpty()) {
       return null;
@@ -144,10 +178,23 @@ public class CardEffectRegistry {
     if (cardId == null) {
       return null;
     }
-    return specs.get(cardId.trim());
+    String key = cardId.trim();
+    CardEffectSpec spec = specs.get(key);
+    if (spec != null) {
+      return spec;
+    }
+    // Lá GIẢ của ô ⭐ không nằm trong bảng 20 lá nhưng vẫn phải tra được
+    // (hiệu ứng NONE, 1 điểm) — cùng đường với 20 lá thật.
+    return STAR_CARD_ID.equals(key) ? starSpec : null;
   }
 
-  /** Danh sách mã lá server biết — dùng cho test và đối chiếu với client. */
+  /**
+   * Danh sách mã lá CƠ HỘI / THỬ THÁCH server biết — dùng cho test và đối
+   * chiếu với client.
+   *
+   * <p>KHÔNG gồm {@link #STAR_CARD_ID}: đó là lá giả của ô ⭐, không thuộc
+   * danh mục 20 lá phía client.
+   */
   public Set<String> cardIds() {
     return Collections.unmodifiableSet(specs.keySet());
   }

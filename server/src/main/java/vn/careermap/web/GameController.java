@@ -64,7 +64,12 @@ public class GameController {
    * <p><b>Lá do SERVER rút</b> ngay lúc người chơi rơi vào ô thẻ (xem
    * {@code DiceResponse.cardId} và {@code GameSnapshot.pendingCardId}).
    * {@code cardId} trong request chỉ để ĐỐI CHIẾU: gửi lá khác lá đã được cấp
-   * ⇒ 400; không gửi ⇒ server dùng lá đã cấp.
+   * ⇒ 400; không gửi ⇒ server dùng lá đã cấp. Ô ⭐ dùng lá GIẢ {@code SAO}
+   * (+1 điểm) — cũng do server cấp, không phải lá trong danh mục 20 lá.
+   *
+   * <p><b>Cờ {@code skipped}</b> (nút "Không hoàn thành"): client chỉ BÁO CÁO,
+   * server QUYẾT ĐỊNH — không áp hiệu ứng, không cộng điểm, nhưng vẫn đóng
+   * lượt để ván không kẹt. Trả về {@code effect = "SKIPPED"}.
    *
    * <p>Chỉ người đang ở lượt trả lời trong phòng ĐANG CHƠI mới gọi được:
    * không có phòng / phòng chưa bắt đầu / phòng đã kết thúc ⇒ 403; không phải

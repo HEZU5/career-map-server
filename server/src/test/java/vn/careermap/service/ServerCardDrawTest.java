@@ -148,17 +148,22 @@ class ServerCardDrawTest {
   }
 
   @Test
-  void roiVaoOsaoKhongMoLượtTraLoi() {
-    // Ô 8 (CHANCE) + xúc xắc 1 ⇒ rơi vào ô 7 = ⭐ ⇒ không rút thẻ, không mở
-    // lượt trả lời.
+  void roiVaoOsaoMoLuotTraLoi() {
+    // Ô 8 (CHANCE) + xúc xắc 1 ⇒ rơi vào ô 7 = ⭐ ⇒ server MỞ lượt trả lời và
+    // cấp lá GIẢ "SAO" (+1 điểm). Trước đây ô ⭐ không mở lượt trả lời ⇒
+    // server không biết người chơi dừng ở ô sao ⇒ client tự cộng +1 ở máy ⇒
+    // bảng xếp hạng trên server sai.
     Room room = room("p1", player("p1", 8), player("p2", 10));
     Player p1 = room.findPlayer("p1");
 
     rollTo(room, p1, 1);
 
     assertThat(p1.getCurrentPosition()).isEqualTo(7);
-    assertThat(room.getPendingCardId()).isNull();
-    assertThat(room.isPendingAnswer()).isFalse();
+    assertThat(TurnCoordinator.pathTile(7)).isEqualTo(TileType.STAR);
+    assertThat(room.getPendingCardId()).isEqualTo(CardEffectRegistry.STAR_CARD_ID);
+    assertThat(room.getTurnPhase()).isEqualTo(TurnPhase.WAITING_ANSWER);
+    assertThat(room.getTurnPlayerKey()).isEqualTo("p1");
+    assertThat(room.isPendingAnswer()).isTrue();
   }
 
   @Test
@@ -211,7 +216,8 @@ class ServerCardDrawTest {
           .isIn(registry.chanceCardIds().toArray(String[]::new));
       assertThat(registry.drawCardFor(TileType.CHALLENGE))
           .isIn(registry.challengeCardIds().toArray(String[]::new));
-      assertThat(registry.drawCardFor(TileType.STAR)).isNull();
+      // Ô ⭐ ⇒ lá GIẢ "SAO" (không thuộc bộ Cơ hội/Thử thách).
+      assertThat(registry.drawCardFor(TileType.STAR)).isEqualTo(CardEffectRegistry.STAR_CARD_ID);
       assertThat(registry.drawCardFor(TileType.START)).isNull();
       assertThat(registry.drawCardFor(TileType.R)).isNull();
     }

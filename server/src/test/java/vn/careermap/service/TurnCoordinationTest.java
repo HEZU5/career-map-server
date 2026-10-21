@@ -89,8 +89,9 @@ class TurnCoordinationTest {
   }
 
   @Test
-  void chiStarVaStartKhongRutTh() {
-    // Ô 0 = START, ô 7 = ⭐ → không rút thẻ.
+  void chiStarVaStartKhongPhaiOThem() {
+    // Ô 0 = START (không mở lượt trả lời), ô 7 = ⭐ (mở lượt trả lời, lá giả
+    // "SAO" +1 điểm) — cả hai đều KHÔNG phải ô câu hỏi RIASEC.
     assertThat(TurnCoordinator.pathTile(0).isRiasec()).isFalse();
     assertThat(TurnCoordinator.pathTile(7).name()).isEqualTo("STAR");
   }

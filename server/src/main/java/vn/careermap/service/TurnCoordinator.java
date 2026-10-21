@@ -121,7 +121,8 @@ public class TurnCoordinator {
     // Rơi vào ô THẺ ⇒ SERVER tự rút lá (CƠ HỘI hay THỬ THÁCH tuỳ loại ô) và
     // ghi mã lá vào phòng. Trước đây client tự rút ở máy rồi tự khai `cardId`
     // lên ⇒ người chơi tự chọn được lá đẹp nhất (MOVE_3, EXTRA_ROLL miễn
-    // phí). Ô không phải ô thẻ (ô RIASEC / ⭐ / START) ⇒ không có lá.
+    // phí). Ô RIASEC / START ⇒ không có lá. Ô ⭐ ⇒ lá GIẢ "SAO" (+1 điểm) để
+    // điểm ô sao cũng do server quyết, không phải client tự cộng ở máy.
     room.setPendingCardId(cardEffects.drawCardFor(pathTile(next)));
     if (needsAnswer) {
       // Rơi vào ô thẻ: đổi đồng hồ sang ANSWER_TIMEOUT_S cho chính người này.
@@ -244,10 +245,20 @@ public class TurnCoordinator {
     return PATH.get(Math.floorMod(position, PATH.size()));
   }
 
-  /** Ô này có cần trả lời không (giữ luật cũ: mọi ô trừ START và ⭐). */
+  /**
+   * Ô này có cần trả lời không.
+   *
+   * <p>Mọi ô trừ START đều phải trả lời — KỂ CẢ ô ⭐. Ô sao cho +1 Điểm Chiến
+   * thắng, mà điểm đó phải do SERVER quyết: trước đây ô ⭐ không mở lượt trả
+   * lời ⇒ server không hề biết người chơi dừng ở ô sao ⇒ client tự cộng +1 ở
+   * máy ⇒ <b>bảng xếp hạng trên server sai</b>.
+   *
+   * <p>Ô ⭐ nhận lá GIẢ {@link CardEffectRegistry#STAR_CARD_ID} (hiệu ứng
+   * NONE, 1 điểm) — xem {@code CardEffectRegistry#drawCardFor}.
+   */
   boolean needsAnswerAt(int position) {
     TileType type = PATH.get(Math.floorMod(position, PATH.size()));
-    return type != TileType.START && type != TileType.STAR;
+    return type != TileType.START;
   }
 
   /** Kết quả một lần tung. */

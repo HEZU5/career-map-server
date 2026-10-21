@@ -137,7 +137,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("solo1", "CƠ HỘI 05", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("solo1", "CƠ HỘI 05", null, null, null)))
         .satisfies(BonusEffectTest::assertForbidden);
 
     assertThat(solo.getWinPoints()).isZero();
@@ -153,7 +153,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null, null)))
         .satisfies(BonusEffectTest::assertForbidden);
 
     assertThat(room.findPlayer("p1").getWinPoints()).isZero();
@@ -168,7 +168,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null, null)))
         .satisfies(BonusEffectTest::assertForbidden);
 
     assertThat(room.findPlayer("p1").getWinPoints()).isZero();
@@ -182,7 +182,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p2", "CƠ HỘI 05", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("p2", "CƠ HỘI 05", null, null, null)))
         .isInstanceOf(NotYourTurnException.class);
 
     assertThat(room.findPlayer("p2").getWinPoints()).isZero();
@@ -198,7 +198,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null, null)))
         .satisfies(
             thrown -> {
               assertThat(thrown).isInstanceOf(ResponseStatusException.class);
@@ -221,7 +221,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
 
     assertThat(room.findPlayer("p1").getWinPoints()).isZero();
@@ -233,7 +233,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null, null));
 
     assertThat(res.winPoints()).isEqualTo(3);
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
@@ -245,7 +245,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", null, null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", null, null, null, null));
 
     assertThat(res.winPoints()).isEqualTo(3);
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
@@ -259,7 +259,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null, null));
 
     assertThat(res.effect()).isEqualTo("NONE");
     assertThat(res.winPoints()).isEqualTo(2);
@@ -282,7 +282,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "THỬ THÁCH 01");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "THỬ THÁCH 01", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "THỬ THÁCH 01", null, null, null));
 
     assertThat(res.effect()).isEqualTo("NONE");
     assertThat(res.winPoints()).isEqualTo(2);
@@ -295,7 +295,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "THỬ THÁCH 04");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "THỬ THÁCH 04", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "THỬ THÁCH 04", null, null, null));
 
     assertThat(res.winPoints()).isEqualTo(3);
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
@@ -311,7 +311,7 @@ class BonusEffectTest {
     openCardTurn(room, p1, "CƠ HỘI 03");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null, null));
 
     assertThat(res.effect()).isEqualTo("MOVE_2");
     assertThat(res.winPoints()).isZero();
@@ -334,7 +334,7 @@ class BonusEffectTest {
     openCardTurn(room, p1, "CƠ HỘI 09");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null, null));
 
     assertThat(res.effect()).isEqualTo("MOVE_3");
     assertThat(res.winPoints()).isZero();
@@ -354,7 +354,7 @@ class BonusEffectTest {
     Player p1 = room.findPlayer("p1");
     openCardTurn(room, p1, "CƠ HỘI 09");
 
-    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null));
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null, null));
 
     assertThat(p1.getCompletedLaps()).isEqualTo(1);
     assertThat(p1.getCurrentPosition()).isEqualTo(51);
@@ -368,7 +368,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 02");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 02", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 02", null, null, null));
 
     assertThat(res.effect()).isEqualTo("EXTRA_ROLL");
     assertThat(res.winPoints()).isEqualTo(2);
@@ -388,7 +388,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2"));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2", null));
 
     assertThat(res.effect()).isEqualTo("PICK_PLAYER_PLUS1");
     assertThat(res.winPoints()).isEqualTo(1);
@@ -403,7 +403,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p1"));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p1", null));
 
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(1);
     assertThat(res.awardedPlayerKeys()).containsExactly("p1");
@@ -415,7 +415,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "ghost")))
+            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "ghost", null)))
         .satisfies(BonusEffectTest::assertForbidden);
 
     // Người bị chặn KHÔNG được cộng điểm, và không sinh dòng player mới.
@@ -430,7 +430,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2")))
+            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2", null)))
         .satisfies(BonusEffectTest::assertForbidden);
   }
 
@@ -440,7 +440,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
 
     assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, null)))
+            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 
@@ -452,7 +452,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 08");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 08", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 08", null, null, null));
 
     assertThat(res.effect()).isEqualTo("ALL_PLAYERS_PLUS1");
     assertThat(res.winPoints()).isEqualTo(1);
@@ -469,7 +469,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 08");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 08", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 08", null, null, null));
 
     assertThat(res.awardedPlayerKeys()).containsExactly("p1");
     assertThat(room.findPlayer("p2").getWinPoints()).isZero();
@@ -486,13 +486,13 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "PLUS_5", null)))
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "PLUS_5", null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
     assertThat(room.findPlayer("p1").getWinPoints()).isZero();
 
     // Choice hợp lệ → +3 điểm.
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "PLUS_3", null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "PLUS_3", null, null));
     assertThat(res.effect()).isEqualTo("PLUS3_OR_MOVE_2");
     assertThat(res.winPoints()).isEqualTo(3);
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
@@ -506,7 +506,7 @@ class BonusEffectTest {
     openCardTurn(room, p1, "CƠ HỘI 10");
 
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null, null));
 
     assertThat(res.winPoints()).isZero();
     assertThat(res.fromPosition()).isEqualTo(10);
@@ -521,7 +521,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 10");
 
     assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", null, null)))
+            () -> service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", null, null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 
@@ -534,7 +534,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
-    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null));
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null, null));
 
     assertThat(room.findPlayer("p1").getTotalAnswered()).isEqualTo(1);
   }
@@ -546,7 +546,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 03");
 
-    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null));
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null, null));
 
     assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
   }
@@ -556,7 +556,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 09");
 
-    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null));
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null, null));
 
     assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
   }
@@ -566,7 +566,7 @@ class BonusEffectTest {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 10");
 
-    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null));
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null, null));
 
     assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
   }
@@ -581,7 +581,7 @@ class BonusEffectTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 99", null, null)))
+                    .applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 99", null, null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
     assertThat(room.findPlayer("p1").getWinPoints()).isZero();
   }
@@ -594,22 +594,23 @@ class BonusEffectTest {
 
     assertThatThrownBy(
             () ->
-                service().applyBonusEffect(new BonusEffectRequest("p1", "CO HOI 01", null, null)))
+                service().applyBonusEffect(new BonusEffectRequest("p1", "CO HOI 01", null, null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 
   @Test
   void clientKhongTheTuKhaiDiem() {
     // Request KHÔNG có field winPoints ⇒ client không có chỗ để khai điểm.
+    // (Cờ `skipped` là BÁO CÁO, không phải khai điểm — server tự quyết.)
     assertThat(BonusEffectRequest.class.getRecordComponents())
         .extracting(RecordComponent::getName)
-        .containsExactly("playerId", "cardId", "choice", "targetPlayerKey");
+        .containsExactly("playerId", "cardId", "choice", "targetPlayerKey", "skipped");
 
     // ... và server vẫn tự tính đúng theo bảng.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
     BonusEffectResponse res =
-        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null));
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 05", null, null, null));
 
     assertThat(res.winPoints()).isEqualTo(3);
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
@@ -621,10 +622,10 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
     GameService service = service();
 
-    service.applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null));
+    service.applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null, null));
     // Lượt đã đóng ⇒ gọi lại bị chặn, không farm được điểm.
     assertThatThrownBy(
-            () -> service.applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null)))
+            () -> service.applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 01", null, null, null)))
         .isInstanceOf(TurnBusyException.class);
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(2);
   }
@@ -635,7 +636,7 @@ class BonusEffectTest {
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 01");
 
     assertThatThrownBy(
-            () -> service().applyBonusEffect(new BonusEffectRequest("ghost", "CƠ HỘI 01", null, null)))
+            () -> service().applyBonusEffect(new BonusEffectRequest("ghost", "CƠ HỘI 01", null, null, null)))
         .satisfies(BonusEffectTest::assertBadRequest);
   }
 

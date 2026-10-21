@@ -245,7 +245,8 @@ public class GameService {
    *
    * <ul>
    *   <li>Lượt rút thẻ ⇒ điểm của LÁ SERVER ĐÃ RÚT ({@code
-   *       Room#getPendingCardId()}), không phải lá client khai.
+   *       Room#getPendingCardId()}), không phải lá client khai. Lá giả của ô ⭐
+   *       ({@code SAO}) cũng đi qua đường này ⇒ 1 điểm.
    *   <li>Đứng trên ô ⭐ ⇒ 1 điểm theo luật bàn.
    *   <li>Còn lại (câu hỏi RIASEC) ⇒ 0.
    * </ul>
@@ -296,6 +297,10 @@ public class GameService {
    * vào phòng ({@link Room#getPendingCardId()}). Client gửi {@code cardId} để
    * đối chiếu thì LỆCH ⇒ 400; không gửi ⇒ server dùng lá đã cấp.
    *
+   * <p><b>CỜ {@code skipped}.</b> Client chỉ BÁO CÁO ("không hoàn thành"), server
+   * QUYẾT ĐỊNH: không áp hiệu ứng, không cộng điểm, nhưng VẪN đóng lượt để ván
+   * không kẹt — xem {@link #applySkipped(Room, Player)}.
+   *
    * <p>Lá lạ → 400. Lựa chọn không hợp lệ với lá đó → 400. Người được chọn
    * không ở trong phòng (hoặc đã rời phòng) → 403.
    */
@@ -304,6 +309,9 @@ public class GameService {
     Player player = requirePlayer(request.playerId());
     Room room = requirePlayableRoom(player);
     requireAnswerTurn(room, player);
+    if (isSkipped(request)) {
+      return applySkipped(room, player);
+    }
     String cardId = resolveDrawnCardId(room, request.cardId());
     CardEffectRegistry.CardEffectSpec spec = cardEffects.effectOf(cardId);
     if (spec == null) {
@@ -401,6 +409,45 @@ public class GameService {
     }
     return new BonusEffectResponse(
         spec.effect().name(), winPoints, from, to, List.copyOf(awarded), message);
+  }
+
+  /**
+   * Người chơi có BÁO CÁO bỏ qua lá không.
+   *
+   * <p>Client chỉ BÁO CÁO; server QUYẾT ĐỊNH hậu qua (xem {@link
+   * #applySkipped(Room, Player)}). {@code null} = không bỏ qua.
+   */
+  private boolean isSkipped(BonusEffectRequest request) {
+    return Boolean.TRUE.equals(request.skipped());
+  }
+
+  /**
+   * BỎ QUA lá: không áp hiệu ứng, không cộng điểm — nhưng VẪN đóng lượt.
+   *
+   * <p>Vì sao phải đóng lượt: nếu giữ nguyên lượt chờ trả lời thì ván KẸT ở ô
+   * đó cho tới khi hết giờ — mọi người khác phải đợi. Bỏ qua = người chơi
+   * chịu mất điểm của lá đó để ván đi tiếp ngay.
+   *
+   * <p>Ràng buộc: chỉ có nghĩa khi lượt RÚT THẺ hợp lệ ({@code pendingCardId}
+   * khác rỗng). Lượt ở ô RIASEC (không có lá) ⇒ 409, y hệt đường áp hiệu ứng.
+   */
+  private BonusEffectResponse applySkipped(Room room, Player player) {
+    String drawn = room.getPendingCardId();
+    if (drawn == null || drawn.isBlank()) {
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Lượt này không phải lượt rút thẻ nên không có lá để bỏ qua.");
+    }
+    // KHÔNG áp hiệu ứng, KHÔNG cộng điểm, KHÔNG tính vào số câu đã trả lời —
+    // nhưng lượt đóng và sang người kế tiếp.
+    closeTurn(room);
+    broadcaster.gameUpdated(room.getCode(), snapshotBuilder.build(room));
+    return new BonusEffectResponse(
+        BonusEffectResponse.EFFECT_SKIPPED,
+        0,
+        null,
+        null,
+        List.of(),
+        "Bạn đã bỏ qua lá bài này.");
   }
 
   /**

@@ -11,11 +11,17 @@ package vn.careermap.web.dto;
  * @param playerId key của người chơi rút lá
  * @param cardId mã lá, CÓ DẤU (vd {@code CƠ HỘI 03}). KHÔNG BẮT BUỘC: nếu
  *     gửi thì server ĐỐI CHIẾU với lá mình đã cấp cho lượt này — lệch ⇒ 400;
- *     nếu không gửi thì server dùng lá đã cấp. Client KHÔNG được tự chọn lá.
+ *     nếu không gửi thì server dùng lá mình đã cấp. Client KHÔNG được tự chọn
+ *     lá. Lá giả của ô ⭐ có mã {@code SAO} (không dấu).
  * @param choice lựa chọn của người chơi; chỉ dùng cho lá {@code CƠ HỘI 10} —
  *     {@code PLUS_3} hoặc {@code MOVE_2}; lá khác để {@code null}
  * @param targetPlayerKey người được chọn cho lá {@code CƠ HỘI 04}; lá khác để
  *     {@code null}
+ * @param skipped người chơi BÁO CÁO "không hoàn thành" (nút "Không hoàn thành"
+ *     ở lá Thử thách). {@code true} ⇒ server KHÔNG áp hiệu ứng, KHÔNG cộng
+ *     điểm, nhưng VẪN đóng lượt để ván không kẹt. Client chỉ BÁO CÁO; server
+ *     QUYẾT ĐỊNH hậu qua. {@code null} hoặc {@code false} ⇒ áp hiệu ứng bình
+ *     thường.
  */
 public record BonusEffectRequest(
-    String playerId, String cardId, String choice, String targetPlayerKey) {}
+    String playerId, String cardId, String choice, String targetPlayerKey, Boolean skipped) {}
