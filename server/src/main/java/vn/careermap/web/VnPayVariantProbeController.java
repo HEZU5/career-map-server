@@ -303,6 +303,10 @@ public class VnPayVariantProbeController {
    * {@code vnp_SecureHashType}, hoặc bỏ cả {@code vnp_ExpireDate} lẫn
    * {@code vnp_IpnUrl} khỏi hashdata (phỏng đoán gateway chỉ băm tập tham số
    * chính thức của API 2.1.0).
+   *
+   * <p>GA–GI: biến thể BỔ SUNG (chẩn đoán) — cùng quy tắc với B (băm mọi tham số
+   * trừ {@code vnp_IpnUrl}) nhưng chỉ khác GIÁ TRỊ {@code vnp_OrderInfo}, để
+   * kiểm tra gateway có xử lý đặc biệt giá trị này hay không.
    */
   private static final List<Rule> RULES = List.of(
       // --- Bộ bắt buộc ---
@@ -329,7 +333,16 @@ public class VnPayVariantProbeController {
       new Rule("T_hmac_sha256_type_in_hash").alg("HmacSHA256").hashType("SHA256").hashTypeInHash(),
       new Rule("U_hmac_sha512_type_in_hash").hashType("SHA512").hashTypeInHash(),
       new Rule("V_hmac_sha512_no_expire_no_ipn").noExpireDate().noIpnUrl(),
-      new Rule("W_hmac_sha512_hash_no_expire_no_ipn").noExpireDateInHash().noIpnUrlInHash());
+      new Rule("W_hmac_sha512_hash_no_expire_no_ipn").noExpireDateInHash().noIpnUrlInHash(),
+      // --- Bộ chẩn đoán vnp_OrderInfo (cùng quy tắc với B, chỉ khác OrderInfo) ---
+      new Rule("GA_oi_spaces_control").noIpnUrlInHash().orderInfo(ORDER_INFO_SPACES),
+      new Rule("GB_oi_nospace").noIpnUrlInHash().orderInfo(ORDER_INFO_NO_SPACES),
+      new Rule("GC_oi_two_spaces").noIpnUrlInHash().orderInfo("Bao  cao Holland"),
+      new Rule("GD_oi_space_short").noIpnUrlInHash().orderInfo("Bao cao"),
+      new Rule("GE_oi_nospace_long").noIpnUrlInHash().orderInfo("BaocaoHollandBaoCaoHollandTest"),
+      new Rule("GF_oi_diacritics").noIpnUrlInHash().orderInfo("Báo cáo Holland"),
+      new Rule("GH_oi_hyphen").noIpnUrlInHash().orderInfo("Bao-cao-Holland"),
+      new Rule("GI_oi_plus_literal").noIpnUrlInHash().orderInfo("Bao+cao+Holland"));
 
   /** Một biến thể trả về cho client: tên + payUrl hoàn chỉnh. */
   public record ProbeVariant(String name, String url) {}
