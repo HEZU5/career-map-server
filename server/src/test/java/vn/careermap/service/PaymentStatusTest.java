@@ -30,6 +30,14 @@ class PaymentStatusTest {
   private static final VnpayConfig VNPAY =
       new VnpayConfig(true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn");
 
+  /**
+   * Ảnh chụp RIASEC mẫu — nhóm {@code I} điểm cao nhất ⇒ mã Holland {@code "I"}.
+   *
+   * <p>Dùng chung cho các test dưới để assert cả 2 vế: nội dung báo cáo (6
+   * điểm) bị che hay không, còn mã Holland thì luôn có.
+   */
+  private static final String RIASEC = "{\"R\":0,\"I\":14,\"A\":2,\"S\":8,\"E\":2,\"C\":4}";
+
   private final VnpaySignatureService signatureService = new VnpaySignatureService(VNPAY);
   private final PaymentOrderRepository orderRepository = mock(PaymentOrderRepository.class);
 
@@ -144,5 +152,92 @@ class PaymentStatusTest {
     assertThat(res.riasecJson()).contains("\"S\":6");
     assertThat(res.hollandCode()).isEqualTo("S");
     assertThat(res.createdAt()).isEqualTo(paid.getCreatedAt());
+  }
+
+  // ── Nội dung báo cáo: CHỈ trả khi đơn ĐÃ thanh toán ────────────────────────
+
+  /**
+   * Đơn CHƯA thanh toán (PENDING) ⇒ KHÔNG được trả nội dung báo cáo.
+   *
+   * <p>Lỗ hổng đã kiểm chứng live trên production: {@code GET
+   * /api/payments/{orderId}?playerKey=} trả {@code riasecJson} (6 điểm RIASEC
+   * = toàn bộ nội dung báo cáo Holland) cho cả đơn CHƯA thanh toán ⇒ người
+   * chơi tạo đơn rồi gọi API là có báo cáo MIỄN PHÍ (đúng thứ 50.000đ phải
+   * mua).
+   *
+   * <p>Nội dung báo cáo là thứ ĐÃ TRẢ TIỀN ⇒ chỉ trả khi đơn {@code PAID}.
+   * Mã Holland (1 chữ) thì LUÔN trả — chủ dự án chấp nhận mức lộ này.
+   */
+  @Test
+  void donPendingKhongLoNoiDungBaoCao() {
+    PaymentOrder pending = PaymentOrder.create("pending", "p", "R12345", 50000, 15);
+    pending.setRiasecJson(RIASEC);
+    when(orderRepository.findByIdAndPlayerKey("pending", "p")).thenReturn(Optional.of(pending));
+
+    PaymentStatusResponse res = service.getStatus("pending", "p");
+
+    assertThat(res.status()).isEqualTo("PENDING");
+    assertThat(res.riasecJson()).isEmpty();
+    // Mã Holland vẫn đúng (được phép lộ 1 chữ).
+    assertThat(res.hollandCode()).isEqualTo("I");
+  }
+
+  /**
+   * Đơn HẾT HẠN (EXPIRED) ⇒ cũng KHÔNG được trả nội dung báo cáo.
+   *
+   * <p>Đây chính là bằng chứng đã kiểm chứng live: đơn EXPIRED (chưa trả đồng
+   * nào) mà vẫn trả {@code riasecJson}.
+   */
+  @Test
+  void donExpiredKhongLoNoiDungBaoCao() {
+    PaymentOrder expired = PaymentOrder.create("expired", "p", "R12345", 50000, -1);
+    expired.setRiasecJson(RIASEC);
+    when(orderRepository.findByIdAndPlayerKey("expired", "p")).thenReturn(Optional.of(expired));
+    when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    PaymentStatusResponse res = service.getStatus("expired", "p");
+
+    assertThat(res.status()).isEqualTo("EXPIRED");
+    assertThat(res.riasecJson()).isEmpty();
+    assertThat(res.hollandCode()).isEqualTo("I");
+  }
+
+  /**
+   * Đơn ĐÃ thanh toán ⇒ vẫn trả đầy đủ nội dung báo cáo + mã Holland.
+   *
+   * <p>Chống hồi quy: việc che báo cáo phải KHÔNG làm hỏng luồng mua hợp lệ —
+   * người chơi đã trả tiền thì vẫn đọc được báo cáo.
+   */
+  @Test
+  void donPaidVanLoNoiDungBaoCaoDayDu() {
+    PaymentOrder paid = PaymentOrder.create("paid-order", "p", "R12345", 50000, 15);
+    paid.markPaid(Instant.now());
+    paid.setRiasecJson(RIASEC);
+    when(orderRepository.findByIdAndPlayerKey("paid-order", "p")).thenReturn(Optional.of(paid));
+
+    PaymentStatusResponse res = service.getStatus("paid-order", "p");
+
+    assertThat(res.status()).isEqualTo("PAID");
+    assertThat(res.riasecJson()).isEqualTo(RIASEC);
+    assertThat(res.hollandCode()).isEqualTo("I");
+  }
+
+  /**
+   * Đơn ĐÃ thanh toán nhưng bản chụp RIASEC rỗng ⇒ trả {@code ""}, không lỗi.
+   *
+   * <p>Phòng bị dọn sớm có thể làm ảnh chụp mất ⇒ không được ném lỗi 500.
+   */
+  @Test
+  void donPaidKhongCoAnhChupRiasecVanTraChuoiRong() {
+    PaymentOrder paid = PaymentOrder.create("paid-rong", "p", "R12345", 50000, 15);
+    paid.markPaid(Instant.now());
+    paid.setRiasecJson(null);
+    when(orderRepository.findByIdAndPlayerKey("paid-rong", "p")).thenReturn(Optional.of(paid));
+
+    PaymentStatusResponse res = service.getStatus("paid-rong", "p");
+
+    assertThat(res.status()).isEqualTo("PAID");
+    assertThat(res.riasecJson()).isEmpty();
+    assertThat(res.hollandCode()).isEmpty();
   }
 }

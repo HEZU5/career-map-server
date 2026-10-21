@@ -671,6 +671,9 @@ public class PaymentService {
    * mua (đơn của người khác) → 404. Nếu đơn đang {@code PENDING} và đã quá hạn
    * thì đặt {@code EXPIRED} và lưu ngay (lazy expire, không dùng {@code @Scheduled}).
    *
+   * <p>Nội dung báo cáo ({@code riasecJson}) là thứ ĐÃ TRẢ TIỀN ⇒ CHỈ trả khi
+   * đơn đã {@code PAID}. Mã Holland ({@code hollandCode}, 1 chữ) thì LUÔN trả.
+   *
    * @throws ResponseStatusException 404 nếu không tìm thấy đơn hoặc không thuộc
    *                                 người chơi này
    */
@@ -687,10 +690,24 @@ public class PaymentService {
       orderRepository.save(order);
     }
 
-    String riasecJson = order.getRiasecJson();
-    if (riasecJson == null || riasecJson.trim().isEmpty()) {
-      riasecJson = "";
+    // Nội dung báo cáo (6 điểm RIASEC) là thứ ĐÃ TRẢ TIỀN => CHỈ trả khi đơn
+    // đã PAID. Đơn PENDING/EXPIRED trả "" (rỗng).
+    //
+    // Vì sao phải chặn: nếu trả vô điều kiện thì người chơi tạo đơn (chưa
+    // trả đồng nào) rồi gọi GET /api/payments/{orderId}?playerKey= là có
+    // TOÀN BỘ báo cáo Holland MIỄN PHÍ — đúng thứ 50.000đ phải mua.
+    String riasecJson = "";
+    if (order.getStatus() == PaymentStatus.PAID) {
+      String stored = order.getRiasecJson();
+      if (stored != null && !stored.trim().isEmpty()) {
+        riasecJson = stored;
+      }
     }
+
+    // Mã Holland (1 chữ) LUÔN trả — kể cả đơn PENDING/EXPIRED. Tính từ ảnh
+    // chụp RIASEC GỐC (không phải từ chuỗi đã che ở trên) để mã luôn đúng.
+    // Chủ dự án chấp nhận mức lộ 1 chữ này để người chơi vẫn thấy được mã
+    // của chính mình kể cả khi chưa thanh toán.
     return new PaymentStatusResponse(
         order.getId(),
         order.getStatus().name(),

@@ -260,4 +260,66 @@ class PaymentControllerTest {
         .andExpect(jsonPath("$.riasecJson").value(containsString("\"S\":6")))
         .andExpect(jsonPath("$.createdAt").exists());
   }
+
+  // ── Tra trạng thái: nội dung báo cáo CHỈ trả khi đã thanh toán ────────────
+
+  /**
+   * Đơn CHƯA thanh toán (PENDING) ⇒ KHÔNG được trả nội dung báo cáo.
+   *
+   * <p>Lỗ hổng đã kiểm chứng live trên production: endpoint này trả
+   * {@code riasecJson} (6 điểm RIASEC = toàn bộ nội dung báo cáo Holland) cho
+   * cả đơn CHƯA thanh toán ⇒ người chơi tạo đơn rồi gọi API là có báo cáo
+   * MIỄN PHÍ (đúng thứ 50.000đ phải mua).
+   *
+   * <p>Mã Holland (1 chữ) thì vẫn trả — chủ dự án chấp nhận mức lộ này.
+   */
+  @Test
+  void traTrangThaiDonChuaThanhToanKhongLoNoiDungBaoCao() throws Exception {
+    PaymentOrder pending = PaymentOrder.create("pending", "p", "R12345", 50000, 15);
+    pending.setRiasecJson("{\"R\":0,\"I\":14,\"A\":2,\"S\":8,\"E\":2,\"C\":4}");
+    when(orderRepository.findByIdAndPlayerKey("pending", "p")).thenReturn(Optional.of(pending));
+
+    mvc.perform(get("/api/payments/pending").param("playerKey", "p"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("PENDING"))
+        .andExpect(jsonPath("$.hollandCode").value("I"))
+        .andExpect(jsonPath("$.riasecJson").value(""))
+        .andExpect(content().string(not(containsString("\"I\":14"))));
+  }
+
+  /**
+   * Đơn HẾT HẠN (EXPIRED) ⇒ cũng KHÔNG được trả nội dung báo cáo.
+   *
+   * <p>Đây chính là bằng chứng đã kiểm chứng live (đơn EXPIRED mà vẫn trả
+   * {@code riasecJson}).
+   */
+  @Test
+  void traTrangThaiDonHetHanKhongLoNoiDungBaoCao() throws Exception {
+    PaymentOrder expired = PaymentOrder.create("expired", "p", "R12345", 50000, -1);
+    expired.setRiasecJson("{\"R\":0,\"I\":14,\"A\":2,\"S\":8,\"E\":2,\"C\":4}");
+    when(orderRepository.findByIdAndPlayerKey("expired", "p")).thenReturn(Optional.of(expired));
+    when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    mvc.perform(get("/api/payments/expired").param("playerKey", "p"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("EXPIRED"))
+        .andExpect(jsonPath("$.hollandCode").value("I"))
+        .andExpect(jsonPath("$.riasecJson").value(""))
+        .andExpect(content().string(not(containsString("\"I\":14"))));
+  }
+
+  /** Đơn ĐÃ thanh toán ⇒ vẫn trả đủ nội dung báo cáo (chống hồi quy). */
+  @Test
+  void traTrangThaiDonDaThanhToanVanLoNoiDungBaoCao() throws Exception {
+    PaymentOrder paid = PaymentOrder.create("paid", "p", "R12345", 50000, 15);
+    paid.markPaid(java.time.Instant.now());
+    paid.setRiasecJson("{\"R\":0,\"I\":14,\"A\":2,\"S\":8,\"E\":2,\"C\":4}");
+    when(orderRepository.findByIdAndPlayerKey("paid", "p")).thenReturn(Optional.of(paid));
+
+    mvc.perform(get("/api/payments/paid").param("playerKey", "p"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("PAID"))
+        .andExpect(jsonPath("$.hollandCode").value("I"))
+        .andExpect(jsonPath("$.riasecJson").value(containsString("\"I\":14")));
+  }
 }
