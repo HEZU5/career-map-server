@@ -28,12 +28,16 @@ import vn.careermap.domain.TurnPhase;
 public class TurnCoordinator {
   private static final Logger log = LoggerFactory.getLogger(TurnCoordinator.class);
 
-/**
+  /**
    * 53 ô — bảng chuyển động, GIỮ NGUYÊN so với bản gốc (chỉ đổi chỗ chứa).
    *
    * <p>Quân đi ngược index theo mũi tên `<<<<`. 24 ô RIASEC (mỗi nhóm 4),
    * 10 CƠ HỘI, 7 THỬ THÁCH (gồm 4 góc), 11 ô ⭐ trang trí, 1 START. Không có ô
    * FINISH.
+   *
+   * <p>LƯU Ý: 24 ô RIASEC KHÔNG phải số câu hỏi mỗi vòng — {@link #needsAnswerAt(int)} mở
+   * lượt trả lời cho MỌI ô trừ START ⇒ 1 vòng ≈ 52 câu (kể cả ô CƠ HỘI / THỬ THÁCH / ⭐,
+   * dùng lá bài riêng).
    */
   private static final List<TileType> PATH =
       List.of(

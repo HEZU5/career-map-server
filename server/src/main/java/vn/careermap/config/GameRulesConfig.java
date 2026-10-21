@@ -53,7 +53,17 @@ public class GameRulesConfig {
   /** Ngưỡng thắng: phải đi được tối thiểu số vòng này. */
   public final int winMinLaps;
 
-  /** Ngưỡng thắng: phải trả lời tối thiểu số câu này (24 ô RIASEC = 4 câu mỗi vòng). */
+  /**
+   * Ngưỡng thắng: phải trả lời tối thiểu số câu này.
+   *
+   * <p>KHÔNG phải "4 câu mỗi vòng": bàn có 53 ô và {@code TurnCoordinator#needsAnswerAt}
+   * trả {@code true} cho MỌI ô trừ START ⇒ 1 vòng (quân đi hết bàn) là khoảng <b>52 câu</b>.
+   * 24 ô RIASEC chỉ là 24 trong 53 ô; ô CƠ HỘI / THỬ THÁCH / ⭐ cũng mở lượt trả lời (lá bài
+   * riêng).
+   *
+   * <p>Vì vậy ngưỡng thắng thực dục bị <b>số vòng</b> chi phối: đi đủ 1 vòng là đã đủ câu
+   * trả lời, vế "số câu" chỉ là chốt an toàn cho ván ngắn.
+   */
   public final int winMinAnswers;
 
   /**
