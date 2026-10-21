@@ -63,3 +63,8 @@ skills-lock.json
 *.jpg
 *.docx
 AGENTS.md
+
+# Scratch thu thien cua agent (khong commit)
+/.superpowers/
+/.tmp-probe2/
+/.tmp-probe3/
