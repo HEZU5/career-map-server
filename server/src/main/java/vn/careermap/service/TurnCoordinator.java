@@ -112,7 +112,7 @@ public class TurnCoordinator {
     int raw = pos - value;
     int next = Math.floorMod(raw, PATH.size());
     roller.setCurrentPosition(next);
-    if (raw < 0) {
+    if (completesLap(pos, value)) {
       roller.addCompletedLaps(1);
     }
 
@@ -243,6 +243,21 @@ public class TurnCoordinator {
   /** Loại ô tại vị trí đã chuẩn hoá — dùng chung để không lệch luật. */
   public static TileType pathTile(int position) {
     return PATH.get(Math.floorMod(position, PATH.size()));
+  }
+
+  /**
+   * Bước đi này có HOÀN THÀNH một vòng (tức quân chạm ô START lần thứ 2 trở đi) không.
+   *
+   * <p>Quân đi NGƯỢC chiều mũi tên: từ {@code pos} đi {@code value} ô thì các ô đi qua
+   * là {@code pos-1, pos-2, ...}. Quân CHẠM ô START (ô 0) khi {@code pos - value <= 0}
+   * (đáp đúng ô START khi bằng 0, đi xuyên qua ô START khi nhỏ hơn 0).
+   *
+   * <p>NHƯNG lần RỜI START đầu tiên KHÔNG tính: quân bắt đầu ván đang đứng ở ô START,
+   * nên bước đi đầu tiên là đi KHỎI START, chưa phải hoàn thành vòng nào. Vì vậy
+   * {@code completedLaps} chỉ nhích khi quân quay LẠI chạm ô START — tức "lần thứ 2".
+   */
+  public static boolean completesLap(int pos, int value) {
+    return (pos - value) <= 0 && pos != 0;
   }
 
   /**

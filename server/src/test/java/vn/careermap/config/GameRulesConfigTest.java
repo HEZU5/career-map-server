@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
  */
 class GameRulesConfigTest {
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false, 5L);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 15, false, 5L);
 
   @Test
   void paymentAmountLaNamTramKhong() {
@@ -29,9 +29,9 @@ class GameRulesConfigTest {
   }
 
   @Test
-  void nguongThangLaMotVongVaMuoiHaiCau() {
+  void nguongThangLaMotVongVaMuoiLamCau() {
     assertThat(RULES.getWinMinLaps()).isEqualTo(1);
-    assertThat(RULES.getWinMinAnswers()).isEqualTo(12);
+    assertThat(RULES.getWinMinAnswers()).isEqualTo(15);
   }
 
   @Test
@@ -42,7 +42,7 @@ class GameRulesConfigTest {
   @Test
   void vnpayBatKhiDuocMoKhoa() {
     GameRulesConfig rules =
-        new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true, 5L);
+        new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 15, true, 5L);
 
     assertThat(rules.isVnpayEnabled()).isTrue();
   }
@@ -54,7 +54,7 @@ class GameRulesConfigTest {
     assertThat(snapshot.paymentAmountVnd()).isEqualTo(50000L);
     assertThat(snapshot.paymentTtlMinutes()).isEqualTo(15L);
     assertThat(snapshot.winMinLaps()).isEqualTo(1);
-    assertThat(snapshot.winMinAnswers()).isEqualTo(12);
+    assertThat(snapshot.winMinAnswers()).isEqualTo(15);
   }
 
   @Test
@@ -64,7 +64,7 @@ class GameRulesConfigTest {
     assertThat(RULES.snapshot().vnpayEnabled()).isFalse();
 
     GameRulesConfig bat =
-        new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, true, 5L);
+        new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 15, true, 5L);
     assertThat(bat.snapshot().vnpayEnabled()).isTrue();
   }
 

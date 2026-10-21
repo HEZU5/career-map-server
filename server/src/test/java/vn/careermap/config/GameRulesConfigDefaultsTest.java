@@ -45,7 +45,7 @@ class GameRulesConfigDefaultsTest {
       assertThat(rules.getPaymentAmountVnd()).isEqualTo(50000L);
       assertThat(rules.getPaymentTtlMinutes()).isEqualTo(15L);
       assertThat(rules.getWinMinLaps()).isEqualTo(1);
-      assertThat(rules.getWinMinAnswers()).isEqualTo(12);
+      assertThat(rules.getWinMinAnswers()).isEqualTo(15);
       assertThat(rules.getWinBonusPoints()).isEqualTo(5L);
       assertThat(rules.isVnpayEnabled()).isFalse();
     });
@@ -60,7 +60,7 @@ class GameRulesConfigDefaultsTest {
       assertThat(rules.getPaymentAmountVnd()).isEqualTo(50000L);
       assertThat(rules.getPaymentTtlMinutes()).isEqualTo(15L);
       assertThat(rules.getWinMinLaps()).isEqualTo(1);
-      assertThat(rules.getWinMinAnswers()).isEqualTo(12);
+      assertThat(rules.getWinMinAnswers()).isEqualTo(15);
       assertThat(rules.getWinBonusPoints()).isEqualTo(5L);
       assertThat(rules.isVnpayEnabled()).isFalse();
     });

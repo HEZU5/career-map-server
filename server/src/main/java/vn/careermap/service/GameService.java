@@ -171,7 +171,9 @@ public class GameService {
     int raw = pos - value;
     int next = Math.floorMod(raw, TurnCoordinator.pathSize());
     player.setCurrentPosition(next);
-    if (raw < 0) {
+    // Cùng công thức với {@code TurnCoordinator.rollAndMove}: chỉ lần chạm ô
+    // START thứ 2 trở đi mới tính 1 vòng (lần rời START đầu tiên không tính).
+    if (TurnCoordinator.completesLap(pos, value)) {
       player.addCompletedLaps(1);
     }
     // Không có phòng để broadcast ⇒ trạng thái kết thúc truyền qua response.
