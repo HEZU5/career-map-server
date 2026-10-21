@@ -24,7 +24,6 @@ import vn.careermap.exception.NotYourTurnException;
 import vn.careermap.exception.TurnBusyException;
 import vn.careermap.repo.PlayerRepository;
 import vn.careermap.web.dto.AnswerRequest;
-import vn.careermap.web.dto.AnswerResponse;
 import vn.careermap.web.dto.BonusEffectRequest;
 import vn.careermap.web.dto.BonusEffectResponse;
 
@@ -172,17 +171,18 @@ class StarAndSkipTest {
 
   @Test
   void oSaoQuaDuongCuVanCongMotDiem() {
-    // Đường CŨ (/game/answer) ở ô ⭐: server tự tính 1 điểm theo lá giả SAO
-    // đã cấp (client khai 999 cũng không thành).
+    // Đường CŨ (/game/answer) ĐÃ ĐÓNG khi phòng đang chờ xử lý lá bài ⇒ ô ⭐
+    // (lá giả SAO) cũng phải đi qua /api/game/bonus-effect. Điểm ô sao do
+    // server quyết, không có đường thứ hai.
     Room room = room("p1", player("p1", 7), player("p2", 10));
     Player p1 = room.findPlayer("p1");
     openCardTurn(room, p1, CardEffectRegistry.STAR_CARD_ID);
 
-    AnswerResponse res =
-        service().answer(new AnswerRequest("p1", "BONUS", "A", "R", null, 0, 999));
+    assertThatThrownBy(
+            () -> service().answer(new AnswerRequest("p1", "BONUS", "A", "R", null, 0, 999)))
+        .satisfies(StarAndSkipTest::assertConflict);
 
-    assertThat(res.winPoints()).isEqualTo(1);
-    assertThat(p1.getWinPoints()).isEqualTo(1);
+    assertThat(p1.getWinPoints()).isZero();
   }
 
   @Test

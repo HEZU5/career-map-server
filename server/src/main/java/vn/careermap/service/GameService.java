@@ -205,6 +205,18 @@ public class GameService {
         || !room.getTurnPlayerKey().equals(player.getPlayerKey())) {
       throw new NotYourTurnException(room.getCode());
     }
+    // ĐƯỜNG CŨ ĐÃ ĐÓNG khi phòng đang chờ xử lý LÁ BÀI.
+    //
+    // Điểm lá bài chỉ được cộng qua {@code /api/game/bonus-effect} (server tự
+    // tra bảng hiệu ứng rồi tự áp). Nếu {@code /game/answer} vẫn chạy được
+    // ở lượt rút thẻ thì đây là "đường thứ hai" cộng điểm lá — và cộng
+    // `totalAnswered` cho lá chỉ dời quân, phá luật "lá di chuyển không cộng
+    // câu đã trả lời" ⇒ ngưỡng thắng bị lệch.
+    String pendingCardId = room.getPendingCardId();
+    if (pendingCardId != null && !pendingCardId.isBlank()) {
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Ván này đang chờ xử lý lá bài, hãy dùng đường xử lý lá bài.");
+    }
 
     RiasecCategory category = RiasecCategory.valueOf(request.category());
     String target =
@@ -244,9 +256,9 @@ public class GameService {
    * vốn theo luật là 0 điểm. Nay:
    *
    * <ul>
-   *   <li>Lượt rút thẻ ⇒ điểm của LÁ SERVER ĐÃ RÚT ({@code
-   *       Room#getPendingCardId()}), không phải lá client khai. Lá giả của ô ⭐
-   *       ({@code SAO}) cũng đi qua đường này ⇒ 1 điểm.
+   *   <li>Lượt rút thẻ ⇒ ĐÃ BỊ CHẶN ở {@link #answer(AnswerRequest)} (đường
+   *       DUY NHẤT để nhận điểm lá là {@code /api/game/bonus-effect}) ⇒ nhánh
+   *       {@code pendingCardId} bên dưới chỉ còn để phòng thủ.
    *   <li>Đứng trên ô ⭐ ⇒ 1 điểm theo luật bàn.
    *   <li>Còn lại (câu hỏi RIASEC) ⇒ 0.
    * </ul>
@@ -363,10 +375,17 @@ public class GameService {
         if (!target.getPlayerKey().equals(player.getPlayerKey())) {
           award(target, spec.winPoints());
           awarded.add(target.getPlayerKey());
+          // HAI người nhận ⇒ thông báo phải nói "cùng nhận".
+          message =
+              "Bạn và người bạn đồng hành cùng nhận +"
+                  + spec.winPoints()
+                  + " Điểm Chiến thắng.";
+        } else {
+          // Chọn CHÍNH MÌNH ⇒ chỉ MỘT người nhận ⇒ không được nói "cùng nhận"
+          // (trước đây luôn nói vậy ⇒ người chơi tưởng có hai người nhận).
+          message = "Bạn nhận +" + winPoints + " Điểm Chiến thắng.";
         }
         closeTurn(room);
-        message =
-            "Bạn và người bạn đồng hành cùng nhận +" + spec.winPoints() + " Điểm Chiến thắng.";
       }
       case ALL_PLAYERS_PLUS1 -> {
         winPoints = award(player, spec.winPoints());
@@ -619,6 +638,9 @@ public class GameService {
     if (raw < 0) {
       player.addCompletedLaps(1);
     }
+    // Mặt xúc xắc CŨ không còn đúng sau khi dời quân ⇒ xoá (khớp
+    // `closeAnswerTurn`) để client không phải hiện mặt xúc xắc của lượt trước.
+    room.setLastDice(null);
     boolean needsAnswer = turns.needsAnswerAt(to);
     if (needsAnswer) {
       room.setPendingAnswer(true);

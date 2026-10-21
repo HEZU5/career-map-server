@@ -126,6 +126,12 @@ class BonusEffectTest {
     assertThat(((ResponseStatusException) thrown).getReason()).isNotBlank();
   }
 
+  private static void assertConflict(Throwable thrown) {
+    assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+    assertThat(((ResponseStatusException) thrown).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(((ResponseStatusException) thrown).getReason()).isNotBlank();
+  }
+
   // ── CỬA: không có phòng đang chơi thì không được cộng điểm ─────────────
 
   @Test
@@ -327,6 +333,21 @@ class BonusEffectTest {
   }
 
   @Test
+  void moveForwardXoaLastDice() {
+    // Lá dời quân ⇒ mặt xúc xắc CŨ phải bị xoá (khớp `closeAnswerTurn`),
+    // nếu không client vẫn hiện mặt xúc xắc của lượt trước.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    Player p1 = room.findPlayer("p1");
+    p1.setCurrentPosition(10);
+    openCardTurn(room, p1, "CƠ HỘI 03");
+    room.setLastDice(5);
+
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null, null));
+
+    assertThat(room.getLastDice()).isNull();
+  }
+
+  @Test
   void coHoi09DiThem3O() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
@@ -407,6 +428,33 @@ class BonusEffectTest {
 
     assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(1);
     assertThat(res.awardedPlayerKeys()).containsExactly("p1");
+  }
+
+  @Test
+  void coHoi04ChonChinhMinhThiThongBaoChiMotNguoi() {
+    // Chọn CHÍNH MÌNH ⇒ chỉ MỘT người nhận ⇒ câu thông báo không được nói
+    // "cùng nhận" (trước đây luôn nói vậy ⇒ người chơi tưởng có 2 người nhận).
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
+
+    BonusEffectResponse res =
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p1", null));
+
+    assertThat(res.message()).contains("Bạn nhận +1 Điểm Chiến thắng.");
+    assertThat(res.message()).doesNotContain("đồng hành");
+    assertThat(res.message()).doesNotContain("cùng nhận");
+  }
+
+  @Test
+  void coHoi04ChonNguoiKhacThiThongBaoHaiNguoi() {
+    // Chọn NGƯỜI KHÁC ⇒ HAI người cùng nhận ⇒ câu thông báo phải nói đúng.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 04");
+
+    BonusEffectResponse res =
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 04", null, "p2", null));
+
+    assertThat(res.message()).contains("Bạn và người bạn đồng hành cùng nhận +1 Điểm Chiến thắng.");
   }
 
   @Test
@@ -643,18 +691,21 @@ class BonusEffectTest {
   // ── Đường CŨ (/game/answer): server KHÔNG tin lời client ─────────────────
 
   @Test
-  void answerBoQuaWinPointsTuClient() {
-    // Client khai 999 điểm VÀ khai lá khác ("CƠ HỘI 01" = 2 điểm) trong khi
-    // server đã cấp "CƠ HỘI 05" (3 điểm) ⇒ server trả đúng 3 điểm của LÁ
-    // SERVER ĐÃ CẤP: không phải 999, không phải 2.
+  void duongCuAnswerBiTuChoiKhiPhongDangChoLaBai() {
+    // Đường CŨ chỉ dành cho câu hỏi RIASEC. Khi phòng đang chờ xử lý LÁ BÀI
+    // thì mọi điểm lá phải do /api/game/bonus-effect quyết — nếu không, đường
+    // cũ là "đường thứ hai" cộng điểm lá (và cộng totalAnswered cho lá MOVE).
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 05");
 
-    AnswerResponse res =
-        service().answer(new AnswerRequest("p1", "CƠ HỘI 01", "A", "R", null, 0, 999));
+    assertThatThrownBy(
+            () -> service().answer(new AnswerRequest("p1", "CƠ HỘI 05", "A", "R", null, 0, 999)))
+        .satisfies(BonusEffectTest::assertConflict);
 
-    assertThat(res.winPoints()).isEqualTo(3);
-    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
+    // KHÔNG cộng điểm, KHÔNG cộng câu đã trả lời, lượt KHÔNG bị đóng.
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
+    assertThat(room.findPlayer("p1").getTotalAnswered()).isZero();
+    assertThat(room.getTurnPlayerKey()).isEqualTo("p1");
   }
 
   @Test
@@ -687,16 +738,16 @@ class BonusEffectTest {
 
   @Test
   void duongCuKhongTuQuyetDiemChoLaDaRut() {
-    // Lượt rút lá: client gửi winPoints = 0 (nút "không hoàn thành") ⇒ server
-    // vẫn trả điểm theo LÁ SERVER ĐÃ CẤP — client không còn tự quyết.
+    // Lượt RÚT LÁ: đường cũ ĐÃ ĐÓNG (409) — điểm lá chỉ qua
+    // /api/game/bonus-effect ⇒ không còn đường thứ hai cộng điểm.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "THỬ THÁCH 04");
 
-    AnswerResponse res =
-        service().answer(new AnswerRequest("p1", "THỬ THÁCH 04", "A", "R", null, 0, 0));
+    assertThatThrownBy(
+            () -> service().answer(new AnswerRequest("p1", "THỬ THÁCH 04", "A", "R", null, 0, 0)))
+        .satisfies(BonusEffectTest::assertConflict);
 
-    assertThat(res.winPoints()).isEqualTo(3);
-    assertThat(room.findPlayer("p1").getWinPoints()).isEqualTo(3);
+    assertThat(room.findPlayer("p1").getWinPoints()).isZero();
   }
 
   @Test
