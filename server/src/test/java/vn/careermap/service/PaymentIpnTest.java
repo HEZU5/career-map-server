@@ -8,11 +8,17 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import vn.careermap.config.GameRulesConfig;
 import vn.careermap.config.VnpayConfig;
@@ -77,6 +83,84 @@ class PaymentIpnTest {
     assertThat(result).isEqualTo("{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}");
     assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
     verify(orderRepository, never()).save(any());
+  }
+
+  /**
+   * IPN sai chữ ký phải để lại DẤU VẾT trong log.
+   *
+   * <p><b>Vì sao quan trọng:</b> IPN sai chữ ký bị từ chối với
+   * {@code RspCode=97} ⇒ HTTP 200 ⇒ <b>VNPay KHÔNG retry</b> ⇒ đơn <b>không
+   * bao giờ</b> chuyển PAID ⇒ hết 15 phút thành EXPIRED <b>dù tiền đã vào</b>.
+   * Sau khi chuyển sang API 2.1.0 (HMAC-SHA512 + bỏ {@code vnp_SecureHashType}
+   * khỏi chuỗi băm) thì rủi ro "chữ ký lệch" tăng mạnh ⇒ không có log thì
+   * không chẩn đoán được chữ ký lệch ở đâu khi chạy giao dịch thật.
+   *
+   * <p>Log phải đủ để người vận hành DỰNG LẠI chuỗi băm (key + giá trị các
+   * tham số nhận được) và so với chuỗi server đã gửi trong payUrl.
+   */
+  @Test
+  void ipnSaiChuKyGhiLogDeChanDoan() {
+    PaymentOrder order = PaymentOrder.create("order-log", "p", "R12345", 50000, 15);
+    when(orderRepository.findById("order-log")).thenReturn(Optional.of(order));
+
+    Map<String, String> params = signedParams("order-log", "00");
+    params.put("vnp_SecureHash", "chu-ky-sai-abcdef0123456789");
+
+    List<ILoggingEvent> warns = captureWarns(() -> {
+      String result = service.handleIpn(params);
+
+      // HÀNH VI KHÔNG ĐỔI: vẫn trả 97 (VNPay không retry ⇒ đơn không PAID).
+      assertThat(result).isEqualTo("{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}");
+      assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
+    });
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    // Đủ tham số để dựng lại chuỗi băm.
+    assertThat(message).contains("vnp_TxnRef=order-log");
+    assertThat(message).contains("vnp_Amount=5000000");
+    assertThat(message).contains("vnp_TransactionStatus=00");
+    // KHÔNG được lộ giá trị chữ ký (in ra nó là lộ chữ ký hợp lệ ⇒ kẻ xấu có
+    // thể dò HashSecret offline).
+    assertThat(message).doesNotContain("chu-ky-sai-abcdef0123456789");
+    assertThat(message).contains("vnp_SecureHash=***");
+  }
+
+  /**
+   * Giá trị tham số quá dài không được làm log phình vô hạn, và không được
+   * chèn DÒNG LOG GIẢ (giá trị tham số do client kiểm soát được).
+   */
+  @Test
+  void ipnSaiChuKyCatNganGiaTriDai() {
+    Map<String, String> params = signedParams("order-log-long", "00");
+    params.put("vnp_SecureHash", "chu-ky-sai");
+    params.put("vnp_OrderInfo", "don-hang\n[INFO] dong log gia do client chen");
+    params.put("vnp_BankCode", "x".repeat(500));
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain("x".repeat(500));
+    assertThat(message.length()).isLessThan(1000);
+    // Không có newline thô ⇒ client không tạo được dòng log giả.
+    assertThat(message).doesNotContain("\n");
+    assertThat(message).contains("\\n");
+  }
+
+  /** Bắt log WARN của {@link PaymentService} trong lúc chạy khối lệnh. */
+  private static List<ILoggingEvent> captureWarns(Runnable action) {
+    Logger logger = (Logger) LoggerFactory.getLogger(PaymentService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      action.run();
+      return appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   @Test

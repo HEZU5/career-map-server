@@ -119,7 +119,13 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
    `vnp_SecureHashType`.
 4. Kiểm tra log Render có dòng `[FINISH] phong=...` khi kết thúc ván, và có log
    IPN (`IPN xử lý thất bại...`) khi VNPay gọi.
-5. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
+5. Nếu đơn **không** chuyển PAID sau khi thanh toán: tìm trong log dòng
+   `IPN VNPay SAI CHỮ KÝ (RspCode=97)` — dòng đó in ra **toàn bộ tham số IPN
+   nhận được** (giá trị `vnp_SecureHash` được che `***`) để dựng lại chuỗi băm
+   và so với chuỗi server đã gửi trong payUrl. Lưu ý: `RspCode=97` ⇒ **VNPay
+   không retry** ⇒ đơn sẽ **không bao giờ** sang PAID ⇒ hết 15 phút thành
+   EXPIRED dù tiền đã vào ⇒ phải xử lý tay.
+6. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
    dựa trên `RspCode` TRONG BODY (không phải HTTP status):
    - `00`, `02` ⇒ kết thúc luồng;
    - `01`, `04`, `97`, `99` hoặc timeout ⇒ VNPay retry tối đa 10 lần, cách nhau

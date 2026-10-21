@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -69,6 +70,15 @@ public class PaymentService {
    * thức của VNPay (dùng cho đơn tạo từ server).
    */
   private static final String VNPAY_FALLBACK_IP = "127.0.0.1";
+
+  /**
+   * Tên tham số chứa chữ ký — giá trị của nó KHÔNG BAO GIỜ được ghi log (che
+   * lại bằng {@code ***}).
+   */
+  private static final String SECURE_HASH_PARAM = "vnp_SecureHash";
+
+  /** Số ký tự tối đa cho một giá trị tham số khi ghi log (tránh log phình vô hạn). */
+  private static final int LOG_PARAM_VALUE_MAX = 120;
 
   /**
    * Khoá tạo đơn theo {@code playerKey} — dải khoá (striped lock).
@@ -290,6 +300,54 @@ public class PaymentService {
   }
 
   /**
+   * Mô tả bộ tham số IPN nhận được để ghi log chẩn đoán chữ ký.
+   *
+   * <p>Vì sao cần: IPN sai chữ ký bị từ chối với {@code RspCode=97} ⇒ VNPay
+   * KHÔNG retry ⇒ đơn kẹt PENDING ⇒ tiền đã vào mà đơn không bao giờ PAID.
+   * Không có dấu vết thì không chẩn đoán được chữ ký lệch ở đâu khi chạy giao
+   * dịch thật.
+   *
+   * <p>Đủ để người vận hành DỰNG LẠI chuỗi băm: đây là danh sách key + giá
+   * trị (đã giải mã) của mọi tham số nhận được, theo đúng thứ tự alphabet mà
+   * {@link VnpaySignatureService} dùng khi băm.
+   *
+   * <p>An toàn:
+   *
+   * <ul>
+   *   <li>Giá trị {@code vnp_SecureHash} bị CHE ({@code ***}) — in ra nó là lộ
+   *       một chữ ký hợp lệ ⇒ kẻ xấu dò được HashSecret offline.</li>
+   *   <li>Giá trị quá dài bị cắt còn {@value #LOG_PARAM_VALUE_MAX} ký tự để
+   *       log không phình vô hạn.</li>
+   * </ul>
+   */
+  private static String describeParams(Map<String, String> params) {
+    if (params == null || params.isEmpty()) {
+      return "(không có tham số)";
+    }
+    return params.entrySet().stream()
+        .sorted(Map.Entry.comparingByKey())
+        .map(e -> e.getKey() + "=" + maskValueForLog(e.getKey(), e.getValue()))
+        .collect(Collectors.joining(", "));
+  }
+
+  /** Che giá trị chữ ký + cắt bớt giá trị quá dài trước khi ghi log. */
+  private static String maskValueForLog(String key, String value) {
+    if (SECURE_HASH_PARAM.equals(key)) {
+      return "***";
+    }
+    String text = value == null ? "" : value;
+    // Chống chèn DÒNG LOG GIẢ: giá trị tham số do client kiểm soát được ⇒ nếu
+    // để nguyên xuống newline thì client tự tạo được dòng log giả trong log
+    // server (đọc được của ai đó khác trong cùng log).
+    text = text.replace("\r", "\\r").replace("\n", "\\n");
+    if (text.length() > LOG_PARAM_VALUE_MAX) {
+      return text.substring(0, LOG_PARAM_VALUE_MAX)
+          + "...(cắt bớt " + (text.length() - LOG_PARAM_VALUE_MAX) + " ký tự)";
+    }
+    return text;
+  }
+
+  /**
    * Chuẩn hoá giá trị gửi lên VNPay: bỏ DẤU tiếng Việt và bỏ KHOẢNG TRẮNG.
    *
    * <p>VNPay yêu cầu mọi giá trị gửi đi là tiếng Việt không dấu, không ký tự
@@ -410,6 +468,17 @@ public class PaymentService {
   public String handleIpn(Map<String, String> params) {
     try {
       if (!signatureService.verify(params)) {
+        // VAN TRA 97 (khong doi hanh vi): VNPay KHONG retry khi RspCode=97 =>
+        // don se KHONG BAO GIO sang PAID => het 15 phut => EXPIRED du tien da
+        // vao. Nhung phai CO DAU VET de chan doan duoc chu ky lech o dau (sau
+        // khi chuyen sang API 2.1.0: HMAC-SHA512 + bo vnp_SecureHashType khoi
+        // chuoi bam => rui ro "sai chu ky" tang manh).
+        log.warn(
+            "IPN VNPay SAI CHỮ KÝ (RspCode=97) — đơn '{}' sẽ không bao giờ sang PAID. "
+                + "Tham số nhận được (chữ ký tính trên đúng các tham số này, BỎ QUA "
+                + "vnp_SecureHash và vnp_SecureHashType): {}",
+            params == null ? "" : params.get("vnp_TxnRef"),
+            describeParams(params));
         return "{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}";
       }
       if (!isSuccessfulTransaction(params)) {

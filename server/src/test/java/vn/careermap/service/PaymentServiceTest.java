@@ -482,7 +482,10 @@ class PaymentServiceTest {
     Map<String, String> params = parseQuery(response.payUrl());
     String hash = params.remove("vnp_SecureHash");
     assertThat(hash).isNotNull();
-    assertThat(hash).hasSize(64);
+    // Fixture dùng ctor rút gọn => TỰ CHỌN thuật toán theo phiên bản API => 2.1.0
+    // ký HMAC-SHA512 => hash 128 hex (trước đây là 64 hex của SHA256 — assert
+    // SAI so với production).
+    assertThat(hash).hasSize(128);
     assertThat(signatureService.sign(params)).isEqualTo(hash);
   }
 

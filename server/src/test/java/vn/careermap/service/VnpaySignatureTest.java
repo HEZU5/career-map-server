@@ -15,9 +15,10 @@ import vn.careermap.config.VnpayConfig;
  * Chữ ký VNPay là HMAC — SHA256 (API cũ) hoặc SHA512 (API 2.1.0) — khoá là
  * {@code HashSecret}.
  *
- * <p>Các vector SHA256 dưới đây là vector của API CŨ: fixture {@code config}
- * dùng ctor rút gọn, ctor rút gọn GIỮ NGUYÊN hành vi cũ (ghim SHA256).
- * Bộ giao thức API 2.1.0 (SHA512) được kiểm ở {@link #chuKyApi21Sha512DungDungChuoiDaGuiLenGateway()}.
+ * <p>Các vector SHA256 dưới đây là vector của API CŨ: fixture
+ * {@link #configApiCu} ghim rõ ràng {@code pay_web} + {@code HmacSHA256}.
+ * Bộ giao thức API 2.1.0 (SHA512) được kiểm ở
+ * {@link #chuKyApi21Sha512DungDungChuoiDaGuiLenGateway()}.
  *
  * <p><b>QUAN TRỌNG — vì sao test này KHÔNG tự verify bằng chính
  * implementation:</b> lỗi chí mạng của wave trước (hash trên giá trị THÔ
@@ -41,9 +42,21 @@ class VnpaySignatureTest {
 
   private static final String SECRET = "secret";
 
-  private final VnpayConfig config =
-      new VnpayConfig(true, "TMNCODE", SECRET, "https://app.example/return", "https://app.example/ipn");
-  private final VnpaySignatureService signatureService = new VnpaySignatureService(config);
+  /**
+   * Fixture API CŨ: {@code pay_web} + HMAC-SHA256.
+   *
+   * <p>Vì sao phải ghim rõ ràng thay vì dùng ctor rút gọn: ctor rút gọn giờ
+   * TỰ CHỌN thuật toán theo phiên bản API ⇒ với mặc định 2.1.0 nó ký SHA512.
+   * Các vector SHA256 dưới đây là vector ĐỘC LẬP (tính bằng .NET) của bộ giao
+   * thức API CŨ ⇒ phải ghim đúng "API cũ + SHA256", không được trôi theo mặc
+   * định (nếu không, test sẽ "xanh" vì cả hai vế cùng đổi ⇒ mất tác dụng kiểm).
+   */
+  private final VnpayConfig configApiCu = new VnpayConfig(
+      true, "TMNCODE", SECRET, "https://app.example/return", "https://app.example/ipn",
+      "https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm", "HmacSHA256", "",
+      "pay_web", "", "");
+  private final VnpaySignatureService signatureServiceApiCu =
+      new VnpaySignatureService(configApiCu);
 
   /**
    * HMAC-SHA256 viết TAY trong test (không dùng {@link VnpaySignatureService})
@@ -79,7 +92,7 @@ class VnpaySignatureTest {
     params.put("a", "1");
     params.put("b", "2");
 
-    String hash = signatureService.sign(params);
+    String hash = signatureServiceApiCu.sign(params);
 
     // Vector .NET: HMACSHA256("secret", "a=1&b=2")
     assertThat(hash)
@@ -101,7 +114,7 @@ class VnpaySignatureTest {
     params.put("c", null);
     params.put("d", "3");
 
-    String hash = signatureService.sign(params);
+    String hash = signatureServiceApiCu.sign(params);
 
     // Vector .NET: HMACSHA256("secret", "b=2&d=3")
     assertThat(hash)
@@ -133,10 +146,10 @@ class VnpaySignatureTest {
             + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
 
     // Vector .NET: HMACSHA256("secret", canonical đã encode)
-    assertThat(signatureService.sign(params))
+    assertThat(signatureServiceApiCu.sign(params))
         .isEqualTo("08b9b54136ca0d11401fddfacbde6e0018014c93cbeb80977048aa95a2623f1c");
     // Và đúng bằng cách băm tay trên canonical đã encode.
-    assertThat(signatureService.sign(params)).isEqualTo(hmacSha256Hex(SECRET, canonical));
+    assertThat(signatureServiceApiCu.sign(params)).isEqualTo(hmacSha256Hex(SECRET, canonical));
   }
 
   /**
@@ -159,7 +172,7 @@ class VnpaySignatureTest {
             + "&vnp_ReturnUrl=https://app.example/return"
             + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
 
-    assertThat(signatureService.sign(params)).isNotEqualTo(hmacSha256Hex(SECRET, rawCanonical));
+    assertThat(signatureServiceApiCu.sign(params)).isNotEqualTo(hmacSha256Hex(SECRET, rawCanonical));
   }
 
   /**
@@ -185,7 +198,7 @@ class VnpaySignatureTest {
     params.put("vnp_ReturnUrl", "https://app.example/return");
     params.put("vnp_IpnUrl", "https://app.example/ipn");
 
-    String query = signatureService.signedQueryString(params);
+    String query = signatureServiceApiCu.signedQueryString(params);
     int marker = query.lastIndexOf("&vnp_SecureHash=");
     assertThat(marker).isGreaterThan(0);
     String sentToGateway = query.substring(0, marker);
@@ -218,11 +231,11 @@ class VnpaySignatureTest {
             + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
     received.put("vnp_SecureHash", hmacSha256Hex(SECRET, canonical));
 
-    assertThat(signatureService.verify(received)).isTrue();
+    assertThat(signatureServiceApiCu.verify(received)).isTrue();
 
     // Chữ ký tính trên dạng thô KHÔNG được chấp nhận.
     received.put("vnp_SecureHash", hmacSha256Hex(SECRET, "vnp_Amount=5000000&vnp_OrderInfo=Báo cáo Holland&vnp_TransactionStatus=01&vnp_TxnRef=0123456789abcdef0123456789abcdef"));
-    assertThat(signatureService.verify(received)).isFalse();
+    assertThat(signatureServiceApiCu.verify(received)).isFalse();
   }
 
   /**
@@ -233,10 +246,12 @@ class VnpaySignatureTest {
    */
   @Test
   void sha256ChoHash64KyTu() {
+    // Fixture API CŨ + SHA256 ghim rõ ràng (xem {@link #configApiCu}).
     VnpayConfig sha256 =
         new VnpayConfig(
             true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
-            VnpayConfig.DEFAULT_BASE_URL, "HmacSHA256", "");
+            "https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm", "HmacSHA256", "",
+            "pay_web", "", "");
     VnpaySignatureService service = new VnpaySignatureService(sha256);
 
     Map<String, String> params = new LinkedHashMap<>();
@@ -247,10 +262,12 @@ class VnpaySignatureTest {
 
   @Test
   void sha512ChoHash128KyTu() {
+    // Fixture API 2.1.0 + SHA512 ghim rõ ràng (thuật toán chỉ định tay).
     VnpayConfig sha512 =
         new VnpayConfig(
             true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
-            VnpayConfig.DEFAULT_BASE_URL, "SHA512", "SHA512");
+            VnpayConfig.DEFAULT_BASE_URL, "SHA512", "SHA512",
+            "pay", "2.1.0", "other");
     VnpaySignatureService service = new VnpaySignatureService(sha512);
 
     Map<String, String> params = new LinkedHashMap<>();
@@ -294,10 +311,10 @@ class VnpaySignatureTest {
     khongHashType.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
     khongHashType.put("vnp_Amount", "5000000");
 
-    assertThat(signatureService.sign(coHashType))
-        .isEqualTo(signatureService.sign(khongHashType));
+    assertThat(signatureServiceApiCu.sign(coHashType))
+        .isEqualTo(signatureServiceApiCu.sign(khongHashType));
     // Và chuỗi băm phải là đúng canonical không có vnp_SecureHashType.
-    assertThat(signatureService.sign(coHashType))
+    assertThat(signatureServiceApiCu.sign(coHashType))
         .isEqualTo(
             hmacSha256Hex(SECRET, "vnp_Amount=5000000&vnp_TxnRef=0123456789abcdef0123456789abcdef"));
   }
@@ -309,7 +326,7 @@ class VnpaySignatureTest {
     params.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
     params.put("vnp_SecureHashType", "SHA256");
 
-    assertThat(signatureService.signedQueryString(params)).doesNotContain("vnp_SecureHashType");
+    assertThat(signatureServiceApiCu.signedQueryString(params)).doesNotContain("vnp_SecureHashType");
   }
 
   // ── API 2.1.0: HMAC-SHA512 ────────────────────────────────────────────────

@@ -70,7 +70,13 @@ public class VnpayConfig {
    */
   public static final String DEFAULT_ORDER_TYPE = "other";
 
-  /** Thuật toán chữ ký mặc định. */
+  /**
+   * Thuật toán chữ ký mặc định (API cũ — SHA256).
+   *
+   * <p>Giữ hằng này để tương thích (code cũ/thư viện ngoài tham chiếu tới).
+   * Mặc định THỰC TẾ của server là {@link #DEFAULT_HASH_ALGORITHM_API21} khi
+   * đang ở API 2.1.0 — xem {@link #getHashAlgorithm()}.
+   */
   public static final String DEFAULT_HASH_ALGORITHM = "HmacSHA256";
 
   /** Thuật toán chữ ký của API 2.1.0 — tài liệu VNPay BẮT BUỘC HMAC-SHA512. */
@@ -148,8 +154,20 @@ public class VnpayConfig {
     this.baseUrl = isBlank(baseUrl) ? DEFAULT_BASE_URL : baseUrl.trim();
     this.hashType = hashType == null ? "" : hashType.trim();
     this.command = isBlank(command) ? DEFAULT_COMMAND : command.trim();
-    this.version = version == null ? "" : version.trim();
-    this.orderType = orderType == null ? "" : orderType.trim();
+    // version / orderType: RONG -> MAC DINH, nhung CHI khi dang dung API 2.1.0.
+    //
+    // Vì sao can fallback: Render co the dat VNPAY_VERSION= / VNPAY_ORDER_TYPE=
+    // RONG => khong gui vnp_Version/vnp_OrderType => gateway tra "Dữ liệu gửi
+    // sang không đúng định dạng" => don bi tu choi. Khong duoc phu thuoc vao
+    // viec nguoi van hanh co dat rong hay khong (giong command/base-url).
+    //
+    // Vì sao CHI khi dang API 2.1.0: API cu (pay_web) KHONG gui hai tham so nay.
+    // Dien mac dinh 2.1.0/order vao luc do se lam isApi21() thanh true => doi
+    // thuan toan ky (SHA512) va ma thanh cong IPN ("00") => HONG duong quay lai
+    // API cu.
+    boolean api21 = isApi21(this.command, null);
+    this.version = isBlank(version) ? (api21 ? DEFAULT_VERSION : "") : version.trim();
+    this.orderType = isBlank(orderType) ? (api21 ? DEFAULT_ORDER_TYPE : "") : orderType.trim();
     // Ruling B: hash rong -> TU CHON theo phien ban API. Phai gan command/
     // version truoc khi tinh vi isApi21() doc tu hai field nay.
     this.hashAlgorithm =
@@ -164,8 +182,8 @@ public class VnpayConfig {
    * Ctor đầy đủ (8 tham số) — giữ tương thích với code cũ: lệnh / phiên bản /
    * danh mục hàng hoá lấy mặc định (API 2.1.0 {@code pay}).
    *
-   * <p>Thuật toán lấy theo tham số truyền vào — ctor rút gọn GIỮ NGUYÊN hành vi
-   * cũ, không tự chọn theo phiên bản như ctor của Spring.
+   * <p>Thuật toán lấy theo tham số truyền vào; nếu để RỖNG thì tự chọn theo
+   * phiên bản API — y hệt ctor của Spring (không còn khác nhau như trước).
    */
   public VnpayConfig(
       boolean enabled,
@@ -192,13 +210,13 @@ public class VnpayConfig {
 
   /**
    * Ctor rút gọn — dùng 4 giá trị VNPay cơ bản, còn lại lấy mặc định
-   * (gateway sandbox API 2.1.0 + HMAC-SHA256). Tiện cho test và cho code gọi
-   * nhanh.
+   * (gateway sandbox API 2.1.0 + thuật toán tự chọn theo phiên bản).
    *
-   * <p>Giữ nguyên hành vi cũ: ghim {@code HmacSHA256} (KHÔNG tự chọn theo phiên
-   * bản như ctor của Spring) ⇒ bộ vector chữ ký SHA256 của API cũ trong test
-   * vẫn dùng được. Production dùng ctor của Spring (hash rỗng ⇒ tự chọn
-   * SHA512 cho API 2.1.0).
+   * <p>Thuật toán để RỖNG ⇒ {@link #VnpayConfig(boolean, String, String, String,
+   * String, String, String, String, String, String, String)} tự chọn SHA512
+   * cho API 2.1.0 — như production. Cố tình ghim SHA256 ở đây sẽ tạo ra một
+   * config TỰ MÂU THUẪN ("API 2.1.0 nhưng ký SHA256") ⇒ gateway chắc chắn từ
+   * chối với "Sai chữ ký".
    */
   public VnpayConfig(
       boolean enabled, String tmnCode, String hashSecret, String returnUrl, String ipnUrl) {
@@ -209,7 +227,7 @@ public class VnpayConfig {
         returnUrl,
         ipnUrl,
         DEFAULT_BASE_URL,
-        DEFAULT_HASH_ALGORITHM,
+        "",
         "",
         DEFAULT_COMMAND,
         DEFAULT_VERSION,
@@ -266,6 +284,11 @@ public class VnpayConfig {
     }
     // API 2.1.0 BẮT BUỘC vnp_Version + vnp_OrderType (tài liệu VNPay). Thiếu
     // thì gateway từ chối đơn — chặn ở cửa cho sạch.
+    //
+    // LƯU Ý: version/orderType RỖNG đã được tự điền MẶC ĐỊNH trong
+    // constructor ⇒ nhánh này giờ chỉ là "lưới an toàn" (kích hoạt nếu một ngày
+    // mặc định bị đặt rỗng). Không được bỏ: đây là chốt chặn cuối cùng trước
+    // khi gửi đơn lên gateway.
     if (isApi21()) {
       if (isBlank(version)) {
         missing.add(ENV_VERSION);

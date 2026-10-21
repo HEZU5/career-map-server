@@ -119,6 +119,10 @@ class VnpayConfigTest {
     assertThat(config.getVersion()).isEqualTo("2.1.0");
     assertThat(config.getOrderType()).isEqualTo("other");
     assertThat(config.isApi21()).isTrue();
+    // Ctor rút gọn cũng tự chọn thuật toán theo phiên bản ⇒ fixture test khớp
+    // production (trước đây ctor này ghim SHA256 ⇒ config "2.1.0 nhưng ký
+    // SHA256" ⇒ gateway chắc chắn từ chối với "Sai chữ ký").
+    assertThat(config.getHashAlgorithm()).isEqualTo("HmacSHA512");
     // API 2.1.0 báo thành công bằng vnp_TransactionStatus=00.
     assertThat(config.successTransactionStatus()).isEqualTo("00");
     // API 2.1.0 KHÔNG được gửi vnp_SecureHashType.
@@ -191,17 +195,52 @@ class VnpayConfigTest {
     assertThat(theoVersion.allowsSecureHashType()).isFalse();
   }
 
+  /**
+   * API 2.1.0 mà {@code vnp_Version}/{@code vnp_OrderType} RỖNG thì phải tự
+   * điền MẶC ĐỊNH — y hệt {@code command}/{@code base-url}.
+   *
+   * <p>Vì sao: Render có thể có biến {@code VNPAY_VERSION=} hoặc
+   * {@code VNPAY_ORDER_TYPE=} RỖNG. Không có fallback thì {@code vnp_Version}
+   * không được gửi ⇒ gateway trả "Dữ liệu gửi sang không đúng định dạng" ⇒
+   * đơn bị từ chối. Không được phụ thuộc vào việc người vận hành có đặt rỗng
+   * hay không.
+   */
+  @Test
+  void api21VersionHayOrderTypeRongThiTuDienMacDinh() {
+    VnpayConfig rong = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "", "pay", "", "");
+
+    assertThat(rong.getVersion()).isEqualTo("2.1.0");
+    assertThat(rong.getOrderType()).isEqualTo("other");
+    assertThat(rong.isApi21()).isTrue();
+    assertThat(rong.isConfigured()).isTrue();
+    assertThat(rong.missingSettings()).isEmpty();
+  }
+
+  /**
+   * API CŨ ({@code pay_web}) thì KHÔNG được tự điền version/order-type.
+   *
+   * <p>Vì sao: API cũ không có hai tham số này. Điền {@code 2.1.0}/{@code other}
+   * vào thì {@code isApi21()} thành true ⇒ đổi luôn thuật toán ký (SHA512) và
+   * mã thành công IPN ({@code 00}) ⇒ HỎNG đường quay lại API cũ.
+   */
+  @Test
+  void apiCuKhongTuDienVersionHayOrderType() {
+    VnpayConfig apiCu = new VnpayConfig(
+        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "", "pay_web", "", "");
+
+    assertThat(apiCu.getVersion()).isEmpty();
+    assertThat(apiCu.getOrderType()).isEmpty();
+    assertThat(apiCu.isApi21()).isFalse();
+    assertThat(apiCu.getHashAlgorithm()).isEqualTo("HmacSHA256");
+    assertThat(apiCu.successTransactionStatus()).isEqualTo("01");
+  }
+
   /** API 2.1.0 bắt buộc có {@code vnp_Version} + {@code vnp_OrderType}. */
   @Test
-  void api21ThieuVersionHoacOrderTypeThiBaoThieuBienDo() {
-    VnpayConfig thieu = new VnpayConfig(
-        true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
-        VnpayConfig.DEFAULT_BASE_URL, "SHA512", "", "pay", "", "");
-
-    assertThat(thieu.isConfigured()).isFalse();
-    assertThat(thieu.missingSettings())
-        .containsExactly(VnpayConfig.ENV_VERSION, VnpayConfig.ENV_ORDER_TYPE);
-
+  void api21CoVersionVaOrderTypeThiKhongThieuBienNao() {
     VnpayConfig du = new VnpayConfig(
         true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn",
         VnpayConfig.DEFAULT_BASE_URL, "SHA512", "", "pay", "2.1.0", "other");
