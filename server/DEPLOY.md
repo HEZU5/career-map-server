@@ -165,7 +165,16 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
       sai chữ ký trong khi thực ra là do cách dựng.
    5. Nối `key=value` bằng `&`, rồi HMAC bằng `VNPAY_HASH_SECRET` theo
       `vnpay.hash-algorithm` (2.1.0 ⇒ HmacSHA512 ⇒ 128 hex; API cũ ⇒
-      HmacSHA256 ⇒ 64 hex) và so với `vnp_SecureHash` nhận được.
+      HmacSHA256 ⇒ 64 hex) và so với **chuỗi băm server đã gửi trong `payUrl`**
+      (`vnp_SecureHash` trong payUrl) — **KHÔNG lấy `vnp_SecureHash` từ dòng
+      log**: giá trị đó bị che `***` nên không lấy được từ log (đó là lý do
+      bước này so với chuỗi trong `payUrl`, khớp với câu ở đầu mục 5).
+   6. **Giá trị dài hơn 120 ký tự bị CẮT trong log** (thấy dấu
+      `...(cắt bớt N ký tự)`). Tham số dài (vd `vnp_ReturnUrl`, `vnp_QRCode`)
+      ⇒ giá trị trong log **đã bị cắt** ⇒ **không dựng lại được** chuỗi băm
+      cho tham số đó ⇒ chữ ký dựng ra LỆCH ⇒ tưởng gateway sai chữ ký. Khi
+      gặp trường hợp này, lấy giá trị **đúng** (không bị cắt) từ `payUrl` (hoặc
+      từ gateway) rồi dựng lại chuỗi băm.
 6. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
    dựa trên `RspCode` TRONG BODY (không phải HTTP status):
    - `00`, `02` ⇒ kết thúc luồng;

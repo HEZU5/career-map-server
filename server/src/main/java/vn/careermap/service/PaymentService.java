@@ -96,7 +96,10 @@ public class PaymentService {
   private static final java.util.regex.Pattern SIGNATURE_SHAPE =
       java.util.regex.Pattern.compile("^(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$");
 
-  /** Số ký tự tối đa cho một giá trị tham số khi ghi log (tránh log phình vô hạn). */
+  /**
+   * Số ký tự tối đa cho một TÊN hoặc GIÁ TRỊ tham số khi ghi log (tránh log
+   * phình vô hạn).
+   */
   private static final int LOG_PARAM_VALUE_MAX = 120;
 
   /**
@@ -337,8 +340,12 @@ public class PaymentService {
    *       một chữ ký hợp lệ ⇒ kẻ xấu dò được HashSecret offline. Che theo
    *       TÊN (không phân biệt hoa thường) lẫn theo GIÁ TRỊ — xem
    *       {@link #maskValueForLog}.</li>
-   *   <li>Giá trị quá dài bị cắt còn {@value #LOG_PARAM_VALUE_MAX} ký tự để
-   *       log không phình vô hạn.</li>
+   *   <li>TÊN và GIÁ TRỊ quá dài bị cắt còn {@value #LOG_PARAM_VALUE_MAX} ký tự
+   *       để log không phình vô hạn.</li>
+   *   <li>TÊN tham số cũng được escape + cắt y hệt giá trị — vì tên tham số
+   *       CŨNG do client kiểm soát được (container decode
+   *       {@code ?foo%0A%5BINFO%5D=x=1} ⇒ tên chứa newline) ⇒ in thô là mời
+   *       chèn DÒNG LOG GIẢ. Xem {@link #maskKeyForLog}.</li>
    * </ul>
    */
   private static String describeParams(Map<String, String> params) {
@@ -347,8 +354,49 @@ public class PaymentService {
     }
     return params.entrySet().stream()
         .sorted(Map.Entry.comparingByKey())
-        .map(e -> e.getKey() + "=" + maskValueForLog(e.getKey(), e.getValue(), params))
+        .map(e -> maskKeyForLog(e.getKey()) + "=" + maskValueForLog(e.getKey(), e.getValue(), params))
         .collect(Collectors.joining(", "));
+  }
+
+  /**
+   * Escape + cắt một chuỗi bất kỳ trước khi ghi log — dùng CHUNG cho cả TÊN
+   * lẫn GIÁ TRỊ tham số.
+   *
+   * <p>Vì sao tách thành một hàm duy nhất: endpoint {@code /api/payments/ipn}
+   * là CÔNG KHAI, KHÔNG xác thực ⇒ cả tên lẫn giá trị tham số đều do bất kỳ ai
+   * kiểm soát được. Tên tham số cũng được container decode ⇒ client gửi
+   * {@code ?foo%0A%5BINFO%5D=x=1} là có tên chứa newline THÔ. Nếu để nguyên
+   * xuống log thì client tự tạo được DÒNG LOG GIẢ (log injection) trong log
+   * server (đọc được của ai đó khác trong cùng log).
+   *
+   * <p>Một hàm duy nhất ⇒ không thể "quên" escape ở một nhánh (nhánh quên là
+   * đúng lớp lỗi đã sót ở vòng sửa trước: giá trị được escape nhưng tên thì
+   * không).
+   *
+   * @param text chuỗi cần escape + cắt (có thể {@code null})
+   * @return chuỗi an toàn để ghi log
+   */
+  private static String escapeAndTruncateForLog(String text) {
+    String escaped = (text == null ? "" : text).replace("\r", "\\r").replace("\n", "\\n");
+    if (escaped.length() > LOG_PARAM_VALUE_MAX) {
+      return escaped.substring(0, LOG_PARAM_VALUE_MAX)
+          + "...(cắt bớt " + (escaped.length() - LOG_PARAM_VALUE_MAX) + " ký tự)";
+    }
+    return escaped;
+  }
+
+  /**
+   * Escape + cắt TÊN tham số trước khi ghi log.
+   *
+   * <p>Tên tham số KHÔNG bao giờ là chữ ký ⇒ không cần che 3 lớp như giá trị
+   * — chỉ cần escape + cắt, DÙNG CHUNG quy tắc với giá trị qua
+   * {@link #escapeAndTruncateForLog} (không nhân bản logic).
+   *
+   * @param key tên tham số (có thể {@code null})
+   * @return tên tham số an toàn để ghi log
+   */
+  private static String maskKeyForLog(String key) {
+    return escapeAndTruncateForLog(key);
   }
 
   /**
@@ -368,16 +416,7 @@ public class PaymentService {
     if (isSecureHashKey(key) || isSecureHashValue(value, params)) {
       return "***";
     }
-    String text = value == null ? "" : value;
-    // Chống chèn DÒNG LOG GIẢ: giá trị tham số do client kiểm soát được ⇒ nếu
-    // để nguyên xuống newline thì client tự tạo được dòng log giả trong log
-    // server (đọc được của ai đó khác trong cùng log).
-    text = text.replace("\r", "\\r").replace("\n", "\\n");
-    if (text.length() > LOG_PARAM_VALUE_MAX) {
-      return text.substring(0, LOG_PARAM_VALUE_MAX)
-          + "...(cắt bớt " + (text.length() - LOG_PARAM_VALUE_MAX) + " ký tự)";
-    }
-    return text;
+    return escapeAndTruncateForLog(value);
   }
 
   /**

@@ -178,6 +178,52 @@ class PaymentIpnTest {
   }
 
   /**
+   * TÊN tham số cũng do client kiểm soát được ⇒ cũng phải được escape, KHÔNG
+   * chỉ giá trị.
+   *
+   * <p><b>Vì sao quan trọng:</b> {@code /api/payments/ipn} là endpoint CÔNG
+   * KHAI, KHÔNG xác thực ⇒ tên tham số do bất kỳ ai chọn. Container decode
+   * tên tham số ⇒ client gửi {@code ?foo%0A%5BINFO%5D=x=1} thì tên tham số
+   * chứa newline THÔ ⇒ nếu in thô thì client chèn được DÒNG LOG GIẢ vào log
+   * Render. Vòng sửa trước chỉ escape GIÁ TRỊ ⇒ lớp rủi ro này còn sót.
+   */
+  @Test
+  void ipnSaiChuKyKhongChenDongLogGiaQuaTenThamSo() {
+    Map<String, String> params = signedParams("order-key", "00");
+    // TÊN tham số chứa newline — đúng thứ container decode ra khi client gửi
+    // `?x%0D%0A%5BINFO%5D=fake=1`.
+    params.put("x\r\n[INFO] fake", "1");
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    // KHÔNG có newline thô ở TÊN tham số ⇒ client không tạo được dòng log giả.
+    assertThat(message).doesNotContain("\n");
+    assertThat(message).doesNotContain("\r");
+    // TÊN tham số được escape y hệt giá trị (không phải bản thô).
+    assertThat(message).contains("x\\r\\n[INFO] fake=1");
+  }
+
+  /**
+   * TÊN tham số quá dài cũng phải bị CẮT, y hệt giá trị — không được đẩy
+   * nguyên khối lớn vào log.
+   */
+  @Test
+  void ipnSaiChuKyCatNganTenThamSoDai() {
+    Map<String, String> params = signedParams("order-key-long", "00");
+    params.put("k".repeat(300), "1");
+
+    List<ILoggingEvent> warns = captureWarns(() -> service.handleIpn(params));
+
+    assertThat(warns).hasSize(1);
+    String message = warns.get(0).getFormattedMessage();
+    assertThat(message).doesNotContain("k".repeat(300));
+    // Cắt đúng ở 120 ký tự, y hệt quy tắc của giá trị.
+    assertThat(message).contains("k".repeat(120) + "...(cắt bớt 180 ký tự)=1");
+  }
+
+  /**
    * Giá trị {@code vnp_TxnRef} quá dài cũng phải bị CẮT (giống các tham số
    * khác) — không được đẩy nguyên khối lớn vào log.
    */
