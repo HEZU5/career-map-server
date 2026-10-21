@@ -17,8 +17,15 @@ import org.junit.jupiter.api.Test;
  * Vì vậy {@code completedLaps} chỉ nhích khi quân quay LẠI chạm ô START — tức
  * "lần thứ 2".
  *
- * <p>Hàm này là nguồn sự thật DUY NHẤT cho cả {@code TurnCoordinator.rollAndMove}
- * lẫn {@code GameService.rollSolo}.
+ * <p>Hàm này là nguồn sự thật DUY NHẤT cho {@code TurnCoordinator.rollAndMove},
+ * {@code GameService.rollSolo} VÀ {@code GameService.moveForward} (lá dời quân
+ * MOVE_2/MOVE_3).
+ *
+ * <p>Lưu ý: {@code completesLap} là hàm THUẦN (stateless) nên trạng thái "đã
+ * về START rồi rời START" không biểu được bằng tham số. Ca đó được kiểm
+ * chứng bằng đi THẬT trong {@code CompletedLapsTest.vongMoiChuaXongThiKhongCongThemVong}
+ * (quân ở ô 1 → sang ô 0 → đi tiếp từ ô 0 ⇒ tổng vòng = 1, không phải 2) —
+ * đừng thêm lại một bản sao thuần của {@code roiStartLanDauKhongTinhVong} ở đây.
  *
  * <p>Thuần JUnit + AssertJ, không Spring context, không database.
  */
@@ -56,6 +63,14 @@ class CompletesLapRuleTest {
   }
 
   @Test
+  void dapDungOStartVoiBuocHaiThiTinhVong() {
+    // Ô 2 - 2 = 0 ⇒ đáp ĐÚNG ô START với bước 2 ⇒ có vòng. Đây đúng là ca
+    // của `GameService.moveForward` (lá MOVE_2) — luật cũ (`raw < 0`) bỏ sót
+    // chính ca này.
+    assertThat(TurnCoordinator.completesLap(2, 2)).isTrue();
+  }
+
+  @Test
   void khongChamStartThiKhongTinhVong() {
     // Ô 52 - 3 = 49 ⇒ không chạm START.
     assertThat(TurnCoordinator.completesLap(52, 3)).isFalse();
@@ -65,11 +80,5 @@ class CompletesLapRuleTest {
   void dungOiTruocStartNhungChuaChamThiKhongTinhVong() {
     // Ô 51 - 2 = 49 ⇒ không chạm START.
     assertThat(TurnCoordinator.completesLap(51, 2)).isFalse();
-  }
-
-  @Test
-  void vongMoiChuaXongThiKhongTinhVong() {
-    // Đã về tới START (vòng trước) rồi rời START ⇒ vòng MỚI chưa xong.
-    assertThat(TurnCoordinator.completesLap(0, 1)).isFalse();
   }
 }

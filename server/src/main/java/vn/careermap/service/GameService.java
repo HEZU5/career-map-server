@@ -626,8 +626,8 @@ public class GameService {
    * Math.floorMod}) — y hệt {@link TurnCoordinator#rollAndMove} nên không lệch
    * luật.
    *
-   * <p>Vượt qua ô START thì cộng 1 vòng: nếu không, người chơi đi qua START bằng
-   * hiệu ứng sẽ không bao giờ đủ điều kiện thắng.
+   * <p>Chạm tới hoặc vượt qua ô START thì cộng 1 vòng: nếu không, người chơi đi
+   * qua START bằng hiệu ứng sẽ không bao giờ đủ điều kiện thắng.
    *
    * <p>Đích là ô thẻ ⇒ mở lượt trả lời cho chính người này; không phải ⇒ đóng
    * lượt và chuyển lượt.
@@ -637,7 +637,11 @@ public class GameService {
     int raw = from - steps;
     int to = Math.floorMod(raw, TurnCoordinator.pathSize());
     player.setCurrentPosition(to);
-    if (raw < 0) {
+    // Cùng công thức với {@code TurnCoordinator.rollAndMove}: CHẠM tới ô
+    // START (đáp đúng ô 0) cũng tính 1 vòng, không chỉ đi xuyên qua START.
+    // Luật cũ (`raw < 0`) bỏ sót đúng ô START ⇒ người chơi đáp đúng ô START
+    // bằng lá thì mất vòng ⇒ đủ 15 câu vẫn phải đi thêm một vòng nữa mới thắng.
+    if (TurnCoordinator.completesLap(from, steps)) {
       player.addCompletedLaps(1);
     }
     // Mặt xúc xắc CŨ không còn đúng sau khi dời quân ⇒ xoá (khớp

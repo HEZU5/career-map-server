@@ -46,7 +46,7 @@ import vn.careermap.web.dto.BonusEffectResponse;
  */
 class BonusEffectTest {
   private static final GameRulesConfig RULES =
-      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 12, false, 5L);
+      new GameRulesConfig(15, 60, 120, 5, 15, 2, 10, 30, "skip", 50000, 15, 1, 15, false, 5L);
 
   /** key -> player, đóng vai "database" cho {@code resolvePlayer}. */
   private final Map<String, Player> byKey = new HashMap<>();
@@ -381,6 +381,60 @@ class BonusEffectTest {
     assertThat(p1.getCurrentPosition()).isEqualTo(51);
   }
 
+  @Test
+  void dapDungOStartBangLaPhaiCongMotVong() {
+    // Ô 3 - 3 = 0 ⇒ quân đáp ĐÚNG ô START ⇒ vẫn phải cộng 1 vòng.
+    // Luật cũ (`raw < 0`) chỉ cộng vòng khi đi XUYÊN qua START ⇒ đáp đúng ô
+    // START bằng lá thì MẤT vòng ⇒ người chơi đã đủ 15 câu vẫn phải đi thêm
+    // một vòng nữa mới thắng.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    Player p1 = room.findPlayer("p1");
+    p1.setCurrentPosition(3);
+    openCardTurn(room, p1, "CƠ HỘI 09");
+
+    BonusEffectResponse res =
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null, null));
+
+    assertThat(res.toPosition()).isEqualTo(0); // đáp đúng ô START
+    assertThat(p1.getCurrentPosition()).isZero();
+    assertThat(p1.getCompletedLaps()).isEqualTo(1);
+  }
+
+  @Test
+  void dapDungOStartBangLaPhaiCongMotVongMove2() {
+    // Ô 2 - 2 = 0 ⇒ đáp ĐÚNG ô START bằng lá MOVE_2 ⇒ cũng phải cộng 1 vòng.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    Player p1 = room.findPlayer("p1");
+    p1.setCurrentPosition(2);
+    openCardTurn(room, p1, "CƠ HỘI 03");
+
+    BonusEffectResponse res =
+        service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 03", null, null, null));
+
+    assertThat(res.toPosition()).isEqualTo(0); // đáp đúng ô START
+    assertThat(p1.getCompletedLaps()).isEqualTo(1);
+  }
+
+  @Test
+  void du15CauVaDapDungOStartBangLaPhaiKetThucVan() {
+    // ĐỦ 15 câu + đáp đúng ô START bằng lá ⇒ ván phải KẾT THÚC. Trước đây
+    // (luật `raw < 0`) lá dời quân không cộng vòng ⇒ ván cứ tiếp tục, người
+    // chơi phải đi thêm một vòng nữa mới thắng.
+    Room room = room("p1", player("p1", 10), player("p2", 10));
+    Player p1 = room.findPlayer("p1");
+    p1.setCurrentPosition(3);
+    for (int i = 0; i < 15; i++) {
+      p1.incrementTotalAnswered();
+    }
+    openCardTurn(room, p1, "CƠ HỘI 09");
+
+    service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null, null));
+
+    assertThat(p1.getCompletedLaps()).isEqualTo(1);
+    assertThat(room.getStatus()).isEqualTo(RoomStatus.FINISHED);
+    assertThat(room.getWinnerKey()).isEqualTo("p1");
+  }
+
   // ── EXTRA_ROLL: chơi thêm một lượt ngay ──────────────────────────────────
 
   @Test
@@ -590,7 +644,7 @@ class BonusEffectTest {
   @Test
   void moveKhongCongTotalAnswered() {
     // Lá MOVE_2: người chơi KHÔNG trả lời câu nào, chỉ đi thêm 2 ô ⇒ không
-    // được tính vào "số câu đã trả lời" (ngưỡng thắng là totalAnswered >= 12).
+    // được tính vào "số câu đã trả lời" (ngưỡng thắng là totalAnswered >= 15).
     Room room = room("p1", player("p1", 10), player("p2", 10));
     openCardTurn(room, room.findPlayer("p1"), "CƠ HỘI 03");
 
