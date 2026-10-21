@@ -324,10 +324,11 @@ public class PaymentService {
   /**
    * Mô tả bộ tham số IPN nhận được để ghi log chẩn đoán chữ ký.
    *
-   * <p>Vì sao cần: IPN sai chữ ký bị từ chối với {@code RspCode=97} ⇒ VNPay
-   * KHÔNG retry ⇒ đơn kẹt PENDING ⇒ tiền đã vào mà đơn không bao giờ PAID.
-   * Không có dấu vết thì không chẩn đoán được chữ ký lệch ở đâu khi chạy giao
-   * dịch thật.
+   * <p>Vì sao cần: IPN sai chữ ký bị từ chối với {@code RspCode=97} ⇒ theo
+   * tài liệu VNPay, VNPay CÓ retry (tối đa 10 lần, cách nhau 5 phút), nhưng
+   * nếu nguyên nhân lệch chữ ký không được sửa thì đơn vẫn kẹt PENDING ⇒ tiền
+   * đã vào mà đơn không bao giờ PAID. Không có dấu vết thì không chẩn đoán được
+   * chữ ký lệch ở đâu khi chạy giao dịch thật.
    *
    * <p>Đủ để người vận hành DỰNG LẠI chuỗi băm: đây là danh sách key + giá
    * trị (đã giải mã) của mọi tham số nhận được, theo đúng thứ tự alphabet mà
@@ -565,8 +566,9 @@ public class PaymentService {
    * <ul>
    *   <li>Lỗi NGHIỆP VỤ (chữ ký sai, đơn không tồn tại, status khác mã thành
    *       công, đã PAID, sai số tiền) → HTTP <b>200</b> kèm {@code RspCode}
-   *       tương ứng. Không retry cũng được vì đơn này không bao giờ thành
-   *       PAID.</li>
+   *       tương ứng. Lỗi nghiệp vụ không tự hết nên retry cũng vô ích — và
+   *       theo tài liệu VNPay, {@code RspCode} 01/04/97/99 vẫn bị retry tối
+   *       đa 10 lần, cách nhau 5 phút (chỉ tốn thêm lượt gọi, không hại).</li>
    *   <li>Lỗi HẠ TẦNG (DB lạnh, connection reset, pool hết) → để exception
    *       ném ra ⇒ HTTP <b>5xx</b> ⇒ VNPay retry. Đây là thứ phải retry:
    *       tiền ĐÃ vào mà đơn kẹt PENDING thì người chơi mất tiền.</li>
@@ -580,13 +582,22 @@ public class PaymentService {
   public String handleIpn(Map<String, String> params) {
     try {
       if (!signatureService.verify(params)) {
-        // VAN TRA 97 (khong doi hanh vi): VNPay KHONG retry khi RspCode=97 =>
-        // don se KHONG BAO GIO sang PAID => het 15 phut => EXPIRED du tien da
-        // vao. Nhung phai CO DAU VET de chan doan duoc chu ky lech o dau (sau
-        // khi chuyen sang API 2.1.0: HMAC-SHA512 + bo vnp_SecureHashType khoi
-        // chuoi bam => rui ro "sai chu ky" tang manh).
+        // VAN TRA 97 (khong doi hanh vi).
+        //
+        // Theo tai lieu VNPay, RspCode=97 KHONG ket thuc luong: VNPay SẼ retry
+        // tối đa 10 lần, cách nhau 5 phút (cùng nhóm với 01/04/99). Nên đơn
+        // vẫn có cơ hội chuyển PAID ở một lần retry sau, NẾU nguyên nhân lệch
+        // chữ ký đã được sửa; nếu không thì đơn vẫn PENDING => het 15 phut =>
+        // EXPIRED du tien da vao.
+        //
+        // Dù vậy phai CO DAU VET de chan doan duoc chu ky lech o dau (sau khi
+        // chuyen sang API 2.1.0: HMAC-SHA512 + bo vnp_SecureHashType khoi chuoi
+        // bam => rui ro "sai chu ky" tang manh).
         log.warn(
-            "IPN VNPay SAI CHỮ KÝ (RspCode=97) — đơn '{}' sẽ không bao giờ sang PAID. "
+            "IPN VNPay SAI CHỮ KÝ (RspCode=97) — đơn '{}' chưa chuyển PAID. "
+                + "VNPay sẽ retry tối đa 10 lần, cách nhau 5 phút: nếu nguyên nhân "
+                + "lệch chữ ký đã được sửa thì một lần retry sau có thể thành công; "
+                + "nếu không, đơn sẽ hết hạn (EXPIRED) dù tiền đã vào. "
                 + "Tham số nhận được (chữ ký tính trên các tham số CÓ GIÁ TRỊ, BỎ QUA "
                 + "vnp_SecureHash và vnp_SecureHashType): {}",
             // Mã đơn cũng phải qua hàm che/escape/cắt: endpoint IPN công khai,

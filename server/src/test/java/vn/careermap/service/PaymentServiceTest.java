@@ -716,6 +716,36 @@ class PaymentServiceTest {
   }
 
   /**
+   * {@code vnp_IpnUrl} PHẢI có mặt trong payUrl.
+   *
+   * <p>Vì sao phải KHOÁ hành vi này bằng test: ở API 2.1.0, IPN URL là cấu
+   * hình ở CẤP TERMINAL/MERCHANT (đăng ký ở terminal VNPay), KHÔNG truyền
+   * theo từng giao dịch. Ta vẫn gửi {@code vnp_IpnUrl} trong payUrl vì nó
+   * KHÔNG làm lệch chữ ký (gateway băm đúng chuỗi query nó nhận) và giữ lại
+   * thì không mất IPN nếu VNPay còn tôn trọng tham số này.
+   *
+   * <p>Nếu ai đó xoá tham số này ⇒ server không nhận được IPN ⇒ đơn treo
+   * PENDING ⇒ hết 15 phút thành EXPIRED <b>dù người chơi đã trả 50.000đ</b>.
+   */
+  @Test
+  void payUrlCoVnpIpnUrl() {
+    when(playerRepository.findByPlayerKey("ipnurl"))
+        .thenReturn(Optional.of(player("ipnurl", 1, 12)));
+    when(gameService.checkWinner(any())).thenReturn(new WinnerResponse(true, 12, 8));
+    when(orderRepository.findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(
+            "ipnurl", PaymentStatus.PENDING))
+        .thenReturn(Optional.empty());
+    when(orderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreatePaymentResponse response = service.createOrder("ipnurl");
+
+    assertThat(response.payUrl()).contains("vnp_IpnUrl=");
+    // Giá trị phải là IPN URL đã cấu hình (URL-encode trong query).
+    Map<String, String> params = parseQuery(response.payUrl());
+    assertThat(params.get("vnp_IpnUrl")).isEqualTo("https://app.example/ipn");
+  }
+
+  /**
    * API 2.1.0 ({@code vnp_Command=pay}) là MỘT BỘ GIAO THỨC RIÊNG: bắt buộc
    * {@code vnp_Version} + {@code vnp_OrderType}, và KHÔNG được gửi
    * {@code vnp_SecureHashType} (tài liệu "Chuyển đổi phiên bản và thuật toán mã

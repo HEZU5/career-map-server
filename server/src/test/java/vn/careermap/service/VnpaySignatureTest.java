@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -236,6 +237,56 @@ class VnpaySignatureTest {
     // Chữ ký tính trên dạng thô KHÔNG được chấp nhận.
     received.put("vnp_SecureHash", hmacSha256Hex(SECRET, "vnp_Amount=5000000&vnp_OrderInfo=Báo cáo Holland&vnp_TransactionStatus=01&vnp_TxnRef=0123456789abcdef0123456789abcdef"));
     assertThat(signatureServiceApiCu.verify(received)).isFalse();
+  }
+
+  /**
+   * Chữ ký viết HOA vẫn phải được chấp nhận (hành vi KHÔNG phân biệt hoa
+   * thường).
+   *
+   * <p>Vì sao phải KHOÁ hành vi này: {@code sign()} trả hex lowercase, nhưng
+   * {@code verify()} trước đây dùng {@code equalsIgnoreCase} ⇒ chấp nhận cả
+   * hex HOA. Khi chuyển sang so sánh constant-time
+   * ({@link java.security.MessageDigest#isEqual(byte[], byte[])}) phải CHUẨN HOÁ
+   * chữ ký nhận được về lowercase TRƯỚC khi so — nếu không, một IPN có
+   * {@code vnp_SecureHash} viết HOA sẽ bị từ chối ({@code RspCode=97}) ⇒ đơn
+   * treo PENDING ⇒ người chơi mất tiền.
+   *
+   * <p>Fixture dùng đúng cấu hình production (API 2.1.0 ⇒ HMAC-SHA512, hash
+   * 128 hex) và chữ ký được tính tay bằng {@code javax.crypto.Mac} — không
+   * tin vào chính implementation cần kiểm.
+   */
+  @Test
+  void verifyChapNhanChuKyVietHoa() {
+    VnpayConfig api21 = new VnpayConfig(
+        true, "TMNCODE", SECRET, "https://app.example/return", "https://app.example/ipn",
+        VnpayConfig.DEFAULT_BASE_URL, "", "", "pay", "2.1.0", "other");
+    VnpaySignatureService service = new VnpaySignatureService(api21);
+
+    Map<String, String> base = new LinkedHashMap<>();
+    base.put("vnp_TxnRef", "0123456789abcdef0123456789abcdef");
+    base.put("vnp_Amount", "5000000");
+    base.put("vnp_TransactionStatus", "00");
+    String canonical =
+        "vnp_Amount=5000000"
+            + "&vnp_TransactionStatus=00"
+            + "&vnp_TxnRef=0123456789abcdef0123456789abcdef";
+    String hash = hmacSha512Hex(SECRET, canonical);
+    assertThat(hash).hasSize(128);
+
+    // Chữ ký lowercase (đúng chuẩn VNPay) — phải chấp nhận.
+    Map<String, String> thuong = new LinkedHashMap<>(base);
+    thuong.put("vnp_SecureHash", hash);
+    assertThat(service.verify(thuong)).isTrue();
+
+    // Chữ ký HOA — PHẢI chấp nhận (không đổi hành vi so với equalsIgnoreCase).
+    Map<String, String> hoa = new LinkedHashMap<>(base);
+    hoa.put("vnp_SecureHash", hash.toUpperCase(Locale.ROOT));
+    assertThat(service.verify(hoa)).isTrue();
+
+    // Chữ ký sai vẫn phải bị từ chối.
+    Map<String, String> sai = new LinkedHashMap<>(base);
+    sai.put("vnp_SecureHash", "0".repeat(128));
+    assertThat(service.verify(sai)).isFalse();
   }
 
   /**

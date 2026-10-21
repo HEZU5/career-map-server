@@ -41,7 +41,25 @@ Trong Render Dashboard:
 | `VNPAY_TMN_CODE` | mã merchant của VNPay | **CO** | `vnp_TmnCode` trong payUrl |
 | `VNPAY_HASH_SECRET` | khoá bí mật của VNPay | **CO** | khoá HMAC ký đơn - KHÔNG hardcode, KHÔNG commit |
 | `VNPAY_RETURN_URL` | `https://career-map-2026-b08f1.web.app/ket-qua-thanh-toan` | **CO** | nơi VNPay đưa người chơi về sau khi trả |
-| `VNPAY_IPN_URL` | `https://<server>.onrender.com/api/payments/ipn` | **CO** | nơi VNPay báo kết quả server-to-server |
+| `VNPAY_IPN_URL` | `https://<server>.onrender.com/api/payments/ipn` | **CO** | nơi VNPay báo kết quả server-to-server — **phải ĐĂNG KÝ ở terminal VNPay**, xem khối bên dưới |
+
+> ### ⚠️ PHẢI ĐĂNG KÝ IPN URL Ở TERMINAL VNPAY (không phải chỉ đặt biến)
+>
+> Ở API 2.1.0, **IPN URL là cấu hình ở CẤP TERMINAL/MERCHANT**, KHÔNG truyền
+> theo từng giao dịch. Nếu terminal chưa được đăng ký IPN URL thì **VNPay
+> không gọi IPN về server** ⇒ đơn treo PENDING ⇒ hết 15 phút thành EXPIRED
+> **dù người chơi đã trả 50.000đ**.
+>
+> - **Sandbox**: đăng ký tại
+>   `https://sandbox.vnpayment.vn/merchantv2/Account/TerminalEdit.htm`
+>   với giá trị `https://career-map-server.onrender.com/api/payments/ipn`.
+> - **Production**: phải **LIÊN HỆ VNPay** để đăng ký (tự đăng ký ở sandbox
+>   không có hiệu lực ở production).
+> - Giá trị phải **KHÔNG dấu tiếng Việt, KHÔNG khoảng trắng** — giống
+>   `VNPAY_RETURN_URL`.
+> - `vnp_IpnUrl` **vẫn được gửi trong payUrl** (không làm lệch chữ ký vì
+>   gateway băm đúng chuỗi query nó nhận, và giữ lại thì không mất IPN nếu
+>   VNPay còn tôn trọng) — nhưng **không thay thế** cho việc đăng ký ở terminal.
 
 > **`VNPAY_RETURN_URL` KHÔNG kèm query string.** VNPay sẽ append
 > `vnp_Amount`, `vnp_TxnRef`, `vnp_SecureHash` vào URL này. App đã bóc phần
@@ -114,8 +132,10 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
 >   từ chối đơn.
 > - Ngoài ra phải trỏ `VNPAY_BASE_URL` về endpoint cũ
 >   (`https://sandbox.vnpayment.vn/paymentgateway/paymenturl.htm`) — nhưng
->   endpoint đó **đã 404** ⇒ API cũ coi như đã chết, chỉ dùng để rollback
->   tạm thời.
+>   endpoint đó **đã 404** ⇒ đường quay lại API cũ chỉ là **QUY ƯỚC**, KHÔNG
+>   phải đường dự phòng thực sự: bộ tham số 2.0.x (hash **thô** + gửi
+>   `vnp_SecureHashType`) **không được server hỗ trợ** nữa ⇒ kể cả endpoint
+>   còn sống thì chữ ký cũng lệch ⇒ không dùng được để rollback.
 
 ### 2.4. CORS (tuỳ chọn)
 
@@ -132,21 +152,36 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
    - kiểm tra `VNPAY_HASH_ALGORITHM` có khớp bộ giao thức không (để trống ⇒ tự
      chọn theo phiên bản: 2.1.0 ⇒ SHA512);
    - **đừng đổi lệch một biến**: xem bảng ở §2.3.
-2. Kiểm tra `vnp_ReturnUrl` trong payUrl (mở payUrl, xem query string) có trỏ
+2. **IPN URL đã được ĐĂNG KÝ ở terminal VNPay chưa?** (xem khối cảnh báo ở
+   §2.2 — sandbox: `https://sandbox.vnpayment.vn/merchantv2/Account/TerminalEdit.htm`,
+   production: phải liên hệ VNPay; giá trị đăng ký:
+   `https://career-map-server.onrender.com/api/payments/ipn`).
+   Ở API 2.1.0, IPN URL là cấu hình ở CẤP TERMINAL/MERCHANT, KHÔNG truyền
+   theo từng giao dịch ⇒ terminal chưa đăng ký thì **VNPay không gọi IPN về
+   server** ⇒ đơn treo PENDING ⇒ hết 15 phút thành EXPIRED **dù người chơi đã
+   trả 50.000đ**.
+   - Phân biệt "IPN tới nơi khác" với "IPN không tới": payUrl **có**
+     `vnp_IpnUrl=` (xem §2.2) ⇒ nếu IPN có tới mà log KHÔNG có dòng IPN thì
+     kiểm tra terminal đã đăng ký đúng URL chưa; ngược lại, payUrl **không**
+     có `vnp_IpnUrl` là dấu hiệu server đang cấu hình sai.
+3. Kiểm tra `vnp_ReturnUrl` trong payUrl (mở payUrl, xem query string) có trỏ
    về `/ket-qua-thanh-toan` không.
-3. Kiểm tra payUrl có ĐỦ tham số bắt buộc của API 2.1.0 không:
+4. Kiểm tra payUrl có ĐỦ tham số bắt buộc của API 2.1.0 không:
    `vnp_Version=2.1.0`, `vnp_Command=pay`, `vnp_OrderType=other`, `vnp_IpAddr`
    (thiếu `vnp_IpAddr` là gateway trả "Dữ liệu gửi sang không đúng định dạng"),
    `vnp_TmnCode`, `vnp_TxnRef`, `vnp_Amount`, `vnp_CurrCode`, `vnp_CreateDate`,
-   `vnp_OrderInfo`, `vnp_ReturnUrl`, `vnp_Locale` — và KHÔNG có
-   `vnp_SecureHashType`.
-4. Kiểm tra log Render có dòng `[FINISH] phong=...` khi kết thúc ván, và có log
+   `vnp_OrderInfo`, `vnp_ReturnUrl`, `vnp_Locale`, `vnp_ExpireDate` (tài liệu
+   chính thức ghi `vnp_ExpireDate` là **BẮT BUỘC** cho `vnp_Command=pay`; code
+   ta có gửi ✓) — và KHÔNG có `vnp_SecureHashType`.
+5. Kiểm tra log Render có dòng `[FINISH] phong=...` khi kết thúc ván, và có log
    IPN (`IPN xử lý thất bại...`) khi VNPay gọi.
-5. Nếu đơn **không** chuyển PAID sau khi thanh toán: tìm trong log dòng
+6. Nếu đơn **không** chuyển PAID sau khi thanh toán: tìm trong log dòng
    `IPN VNPay SAI CHỮ KÝ (RspCode=97)` — dòng đó in ra **toàn bộ tham số IPN
    nhận được** (giá trị chữ ký được che `***`) để dựng lại chuỗi băm và so với
-   chuỗi server đã gửi trong payUrl. Lưu ý: `RspCode=97` ⇒ **VNPay không
-   retry** ⇒ đơn sẽ **không bao giờ** sang PAID ⇒ hết 15 phút thành EXPIRED
+   chuỗi server đã gửi trong payUrl. Lưu ý: theo tài liệu VNPay, `RspCode=97`
+   ⇒ VNPay **CÓ retry** (tối đa 10 lần, cách nhau 5 phút — cùng nhóm với
+   01/04/99) ⇒ nếu nguyên nhân lệch chữ ký được sửa, một lần retry sau có thể
+   thành công; nếu không sửa được, đơn vẫn PENDING ⇒ hết 15 phút thành EXPIRED
    dù tiền đã vào ⇒ phải xử lý tay.
 
    **Cách dựng lại chuỗi băm từ dòng log đó** (đúng thứ tự
@@ -168,14 +203,14 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
       HmacSHA256 ⇒ 64 hex) và so với **chuỗi băm server đã gửi trong `payUrl`**
       (`vnp_SecureHash` trong payUrl) — **KHÔNG lấy `vnp_SecureHash` từ dòng
       log**: giá trị đó bị che `***` nên không lấy được từ log (đó là lý do
-      bước này so với chuỗi trong `payUrl`, khớp với câu ở đầu mục 5).
+      bước này so với chuỗi trong `payUrl`, khớp với câu ở đầu mục 6).
    6. **Giá trị dài hơn 120 ký tự bị CẮT trong log** (thấy dấu
       `...(cắt bớt N ký tự)`). Tham số dài (vd `vnp_ReturnUrl`, `vnp_QRCode`)
       ⇒ giá trị trong log **đã bị cắt** ⇒ **không dựng lại được** chuỗi băm
       cho tham số đó ⇒ chữ ký dựng ra LỆCH ⇒ tưởng gateway sai chữ ký. Khi
       gặp trường hợp này, lấy giá trị **đúng** (không bị cắt) từ `payUrl` (hoặc
       từ gateway) rồi dựng lại chuỗi băm.
-6. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
+7. Kiểm tra **IPN có được trả `RspCode` hợp lệ**: gateway VNPay quyết định retry
    dựa trên `RspCode` TRONG BODY (không phải HTTP status):
    - `00`, `02` ⇒ kết thúc luồng;
    - `01`, `04`, `97`, `99` hoặc timeout ⇒ VNPay retry tối đa 10 lần, cách nhau

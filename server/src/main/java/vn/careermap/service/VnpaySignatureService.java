@@ -2,8 +2,10 @@ package vn.careermap.service;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import javax.crypto.Mac;
@@ -81,14 +83,30 @@ public class VnpaySignatureService {
    * {@code @RequestParam}); {@link #canonical} encode lại đúng bằng cách VNPay
    * dùng lúc gửi ({@code URLEncoder} UTF-8) ⇒ dựng lại đúng chuỗi đã hash.
    *
-   * @return {@code true} nếu chữ ký khớp (so sánh không phân biệt hoa thường).
+   * <p>So sánh chữ ký là CONSTANT-TIME ({@link MessageDigest#isEqual}) để
+   * không lộ thời gian theo vị trí ký tự lệch. Chữ ký nhận được được CHUẨN
+   * HOÁ về lowercase trước khi so ⇒ vẫn chấp nhận hex HOA (đúng hành vi cũ
+   * của {@code equalsIgnoreCase}).
+   *
+   * @return {@code true} nếu chữ ký khớp (không phân biệt hoa thường).
    */
   public boolean verify(Map<String, String> params) {
     String received = params == null ? null : params.get(SECURE_HASH_KEY);
     if (received == null || received.isEmpty()) {
       return false;
     }
-    return received.equalsIgnoreCase(sign(params));
+    // So sánh CONSTANT-TIME (MessageDigest.isEqual): không lộ thời gian theo
+    // vị trí ký tự đầu tiên lệch ⇒ kẻ xấu không dò được chữ ký bằng cách đo
+    // thời gian.
+    //
+    // CHUẨN HOÁ chữ ký nhận được về lowercase TRƯỚC khi so: sign() trả hex
+    // lowercase, nhưng trước đây verify() dùng equalsIgnoreCase ⇒ chấp nhận cả
+    // hex HOA. Chuyển thẳng sang isEqual mà không chuẩn hoá sẽ từ chối một
+    // IPN có vnp_SecureHash viết HOA ⇒ RspCode=97 ⇒ đơn treo PENDING ⇒ mất
+    // tiền. Locale.ROOT để không bị lỗi "I" của locale Thổ Nhĩ Kỳ.
+    byte[] expected = sign(params).getBytes(StandardCharsets.UTF_8);
+    byte[] actual = received.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8);
+    return MessageDigest.isEqual(expected, actual);
   }
 
   /**

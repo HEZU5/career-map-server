@@ -89,11 +89,14 @@ class PaymentIpnTest {
    * IPN sai chữ ký phải để lại DẤU VẾT trong log.
    *
    * <p><b>Vì sao quan trọng:</b> IPN sai chữ ký bị từ chối với
-   * {@code RspCode=97} ⇒ HTTP 200 ⇒ <b>VNPay KHÔNG retry</b> ⇒ đơn <b>không
-   * bao giờ</b> chuyển PAID ⇒ hết 15 phút thành EXPIRED <b>dù tiền đã vào</b>.
-   * Sau khi chuyển sang API 2.1.0 (HMAC-SHA512 + bỏ {@code vnp_SecureHashType}
-   * khỏi chuỗi băm) thì rủi ro "chữ ký lệch" tăng mạnh ⇒ không có log thì
-   * không chẩn đoán được chữ ký lệch ở đâu khi chạy giao dịch thật.
+   * {@code RspCode=97} ⇒ HTTP 200 ⇒ theo tài liệu VNPay, {@code 97} **CÓ
+   * retry** (tối đa 10 lần, cách nhau 5 phút) ⇒ nếu nguyên nhân lệch chữ ký
+   * được sửa thì một lần retry sau có thể chuyển PAID; còn nếu không sửa được
+   * thì đơn <b>không bao giờ</b> chuyển PAID ⇒ hết 15 phút thành EXPIRED
+   * <b>dù tiền đã vào</b>. Sau khi chuyển sang API 2.1.0 (HMAC-SHA512 + bỏ
+   * {@code vnp_SecureHashType} khỏi chuỗi băm) thì rủi ro "chữ ký lệch" tăng
+   * mạnh ⇒ không có log thì không chẩn đoán được chữ ký lệch ở đâu khi chạy
+   * giao dịch thật.
    *
    * <p>Log phải đủ để người vận hành DỰNG LẠI chuỗi băm (key + giá trị các
    * tham số nhận được) và so với chuỗi server đã gửi trong payUrl.
@@ -109,7 +112,8 @@ class PaymentIpnTest {
     List<ILoggingEvent> warns = captureWarns(() -> {
       String result = service.handleIpn(params);
 
-      // HÀNH VI KHÔNG ĐỔI: vẫn trả 97 (VNPay không retry ⇒ đơn không PAID).
+      // HÀNH VI KHÔNG ĐỔI: vẫn trả 97 (VNPay có retry tối đa 10 lần ⇒ nếu
+      // lỗi chưa sửa thì đơn vẫn không PAID).
       assertThat(result).isEqualTo("{\"RspCode\":\"97\",\"Message\":\"Fail checksum\"}");
       assertThat(order.getStatus()).isEqualTo(PaymentStatus.PENDING);
     });
