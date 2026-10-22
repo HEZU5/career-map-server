@@ -31,7 +31,8 @@ class PaymentStatusTest {
       new VnpayConfig(true, "TMNCODE", "secret", "https://app.example/return", "https://app.example/ipn");
 
   /**
-   * Ảnh chụp RIASEC mẫu — nhóm {@code I} điểm cao nhất ⇒ mã Holland {@code "I"}.
+   * Ảnh chụp RIASEC mẫu — điểm giảm dần: I=14, S=8, C=4, A=2, E=2, R=0 ⇒
+   * mã Holland <b>3 chữ</b> = {@code "ISC"}.
    *
    * <p>Dùng chung cho các test dưới để assert cả 2 vế: nội dung báo cáo (6
    * điểm) bị che hay không, còn mã Holland thì luôn có.
@@ -87,9 +88,10 @@ class PaymentStatusTest {
   /**
    * Lịch sử KHÔNG được chứa mã Holland.
    *
-   * <p>{@code hollandCode} là 1 chữ cái đủ để NGƯỜI KHÁC đoán ra loại báo cáo
-   * của người chơi chỉ với {@code playerKey} (chuỗi đoán được). Client hiện
-   * không gọi endpoint lịch sử này nên bỏ đi được, chi phí bằng 0.
+   * <p>{@code hollandCode} là 3 chữ (mã Holland đầy đủ) đủ để NGƯỜI KHÁC
+   * đoán ra loại báo cáo của người chơi chỉ với {@code playerKey} (chuỗi đoán
+   * được). Client hiện không gọi endpoint lịch sử này nên bỏ đi được, chi phí
+   * bằng 0.
    */
   @Test
   void lichSuKhongChuaMaHolland() {
@@ -150,7 +152,8 @@ class PaymentStatusTest {
     PaymentStatusResponse res = service.getStatus("mine", "p");
 
     assertThat(res.riasecJson()).contains("\"S\":6");
-    assertThat(res.hollandCode()).isEqualTo("S");
+    // Điểm giảm dần: S=6, R=4, E=3 ⇒ mã Holland 3 chữ "SRE".
+    assertThat(res.hollandCode()).isEqualTo("SRE");
     assertThat(res.createdAt()).isEqualTo(paid.getCreatedAt());
   }
 
@@ -166,7 +169,7 @@ class PaymentStatusTest {
    * mua).
    *
    * <p>Nội dung báo cáo là thứ ĐÃ TRẢ TIỀN ⇒ chỉ trả khi đơn {@code PAID}.
-   * Mã Holland (1 chữ) thì LUÔN trả — chủ dự án chấp nhận mức lộ này.
+   * Mã Holland (3 chữ) thì LUÔN trả — chủ dự án chấp nhận mức lộ này.
    */
   @Test
   void donPendingKhongLoNoiDungBaoCao() {
@@ -178,8 +181,8 @@ class PaymentStatusTest {
 
     assertThat(res.status()).isEqualTo("PENDING");
     assertThat(res.riasecJson()).isEmpty();
-    // Mã Holland vẫn đúng (được phép lộ 1 chữ).
-    assertThat(res.hollandCode()).isEqualTo("I");
+    // Mã Holland vẫn đúng (được phép lộ 3 chữ).
+    assertThat(res.hollandCode()).isEqualTo("ISC");
   }
 
   /**
@@ -199,7 +202,7 @@ class PaymentStatusTest {
 
     assertThat(res.status()).isEqualTo("EXPIRED");
     assertThat(res.riasecJson()).isEmpty();
-    assertThat(res.hollandCode()).isEqualTo("I");
+    assertThat(res.hollandCode()).isEqualTo("ISC");
   }
 
   /**
@@ -219,7 +222,7 @@ class PaymentStatusTest {
 
     assertThat(res.status()).isEqualTo("PAID");
     assertThat(res.riasecJson()).isEqualTo(RIASEC);
-    assertThat(res.hollandCode()).isEqualTo("I");
+    assertThat(res.hollandCode()).isEqualTo("ISC");
   }
 
   /**

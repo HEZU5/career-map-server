@@ -14,10 +14,11 @@ import java.time.Instant;
  * <p>Nội dung báo cáo chỉ đọc được qua {@code GET /api/payments/{orderId}?playerKey=}
  * — endpoint đó kiểm tra chủ đơn.
  *
- * <p>KHÔNG có {@code hollandCode} nữa: đó là 1 chữ cái đủ để NGƯỜI KHÁC đoán ra
- * loại báo cáo của người chơi chỉ với {@code playerKey}. Client hiện không gọi
- * endpoint lịch sử này (lịch sử dựng từ {@code session.myOrderIds} + gọi
- * {@code GET /api/payments/{orderId}}), nên bỏ đi là miễn phí.
+ * <p>KHÔNG có {@code hollandCode} nữa: đó là 3 chữ (mã Holland đầy đủ) đủ để
+ * NGƯỜI KHÁC đoán ra loại báo cáo của người chơi chỉ với {@code playerKey}.
+ * Client hiện không gọi endpoint lịch sử này (lịch sử dựng từ
+ * {@code session.myOrderIds} + gọi {@code GET /api/payments/{orderId}}), nên bỏ
+ * đi là miễn phí.
  *
  * @param orderId   khoá đơn (= {@code vnp_TxnRef})
  * @param status    {@code PENDING} / {@code PAID} / {@code EXPIRED}

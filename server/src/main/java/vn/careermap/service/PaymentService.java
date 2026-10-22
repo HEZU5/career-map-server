@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -672,7 +673,7 @@ public class PaymentService {
    * thì đặt {@code EXPIRED} và lưu ngay (lazy expire, không dùng {@code @Scheduled}).
    *
    * <p>Nội dung báo cáo ({@code riasecJson}) là thứ ĐÃ TRẢ TIỀN ⇒ CHỈ trả khi
-   * đơn đã {@code PAID}. Mã Holland ({@code hollandCode}, 1 chữ) thì LUÔN trả.
+   * đơn đã {@code PAID}. Mã Holland ({@code hollandCode}, 3 chữ) thì LUÔN trả.
    *
    * @throws ResponseStatusException 404 nếu không tìm thấy đơn hoặc không thuộc
    *                                 người chơi này
@@ -704,9 +705,9 @@ public class PaymentService {
       }
     }
 
-    // Mã Holland (1 chữ) LUÔN trả — kể cả đơn PENDING/EXPIRED. Tính từ ảnh
+    // Mã Holland (3 chữ) LUÔN trả — kể cả đơn PENDING/EXPIRED. Tính từ ảnh
     // chụp RIASEC GỐC (không phải từ chuỗi đã che ở trên) để mã luôn đúng.
-    // Chủ dự án chấp nhận mức lộ 1 chữ này để người chơi vẫn thấy được mã
+    // Chủ dự án chấp nhận mức lộ này để người chơi vẫn thấy được mã
     // của chính mình kể cả khi chưa thanh toán.
     return new PaymentStatusResponse(
         order.getId(),
@@ -754,15 +755,53 @@ public class PaymentService {
   }
 
   /**
+   * Thứ tự lục giác RIASEC — dùng làm QUY TẮC HOÀ ĐIỂM khi dựng mã Holland.
+   *
+   * <p>Điểm bằng nhau ⇒ nhóm đứng TRƯỚC trong mảng này được ưu tiên (vd A=4
+   * và C=4 hoà ⇒ A thắng, vì A đứng trước C).
+   *
+   * <p>Phải GIỐNG HAYT Ở SERVER VÀ CLIENT: client tính theo cùng thứ tự
+   * lục giác (thứ tự enum {@code Riasec.values} trong {@code
+   * lib/features/game/domain/holland.dart}).
+   */
+  private static final String[] HOLLAND_ORDER = {"R", "I", "A", "S", "E", "C"};
+
+  /**
+   * Số nhóm lấy ra để dựng mã Holland — 3 (mã Holland là 3 CHỮ theo lý thuyết
+   * John Holland: 3 nhóm điểm cao nhất).
+   */
+  private static final int HOLLAND_CODE_LENGTH = 3;
+
+  /**
    * Tính mã Holland từ chuỗi JSON chứa 6 điểm RIASEC.
    *
-   * <p>Nhóm có điểm cao nhất → mã. Hoà theo thứ tự {@code R, I, A, S, E, C}
-   * (R trước). Trả {@code ""} nếu {@code riasecJson} null/rỗng hoặc không đọc
-   * được điểm nào.
+   * <p><b>Mã Holland là 3 CHỮ</b> — 3 nhóm RIASEC có điểm cao nhất (thứ nhất →
+   * thứ hai → thứ ba), đúng lý thuyết John Holland. Ví dụ {@code "ISA"}.
+   *
+   * <p>Vì sao phải 3 chữ: mã 1 chữ chỉ nói "nhóm này mạnh nhất" ⇒ KHÔNG đủ
+   * để tính được nghề nào hợp. Mã 3 chữ mới định hướng được nghề.
+   *
+   * <p>Quy tắc:
+   *
+   * <ol>
+   *   <li>Sắp xếp 6 nhóm theo điểm GIẢM DẦN.</li>
+   *   <li>Điểm BẰNG nhau ⇒ ưu tiên theo thứ tự lục giác {@code R → I → A → S
+   *       → E → C} (xem {@link #HOLLAND_ORDER}) — nhóm đứng trước thắng.</li>
+   *   <li>Lấy 3 nhóm đầu ⇒ mã 3 chữ.</li>
+   * </ol>
+   *
+   * <p>Quy tắc này PHẢI GIỐNG HAYT Ở SERVER VÀ CLIENT: client tính theo cùng
+   * thứ tự lục giác (thứ tự enum {@code Riasec.values} trong {@code
+   * lib/features/game/domain/holland.dart}). Lệch một chữ là server và client
+   * hiển thị 2 mã khác nhau cho cùng một kết quả ⇒ dùng chung fixture
+   * kiểm chứng.
+   *
+   * <p>An toàn: JSON hỏng/rỗng ⇒ trả {@code ""} (không crash) — ảnh chụp
+   * RIASEC có thể bị dọn mất hoặc hỏng.
    *
    * @param riasecJson chuỗi JSON dạng {@code {"R":4,"I":2,...}} (hoặc các biến
    *                   thể có khoảng trắng/dấu {@code =})
-   * @return mã Holland một chữ cái, hoặc {@code ""}
+   * @return mã Holland 3 chữ cái, hoặc {@code ""} nếu không đọc được điểm nào
    */
   public static String hollandCode(String riasecJson) {
     if (riasecJson == null || riasecJson.trim().isEmpty()) {
@@ -774,9 +813,8 @@ public class PaymentService {
     Map<String, Integer> scores = new LinkedHashMap<>();
     // Regex trích xuất từng cặp "KEY": number hoặc KEY=number / KEY: number
     // theo thứ tự ưu tiên các nhóm R,I,A,S,E,C.
-    String[] groups = {"R", "I", "A", "S", "E", "C"};
     boolean foundAny = false;
-    for (String group : groups) {
+    for (String group : HOLLAND_ORDER) {
       Integer extracted = extractScore(text, group);
       if (extracted != null) {
         foundAny = true;
@@ -789,16 +827,23 @@ public class PaymentService {
       return "";
     }
 
-    String best = "R";
-    int bestScore = scores.get("R");
-    for (String group : groups) {
-      int s = scores.get(group);
-      if (s > bestScore) {
-        bestScore = s;
-        best = group;
-      }
+    // Sap xep theo DIEM giam dan; hoa diem → uu tien theo THU TU LUC GIAC
+    // (R,I,A,S,E,C) — vi du A=4,C=4 thi A thang vi A dung truoc C.
+    List<Integer> order = new ArrayList<>();
+    for (int i = 0; i < HOLLAND_ORDER.length; i++) {
+      order.add(i);
     }
-    return best;
+    order.sort(
+        Comparator.comparingInt((Integer i) -> scores.get(HOLLAND_ORDER[i]))
+            .reversed()
+            .thenComparingInt(i -> i));
+
+    // Lay 3 nhom dau → ma 3 chu.
+    StringBuilder code = new StringBuilder(HOLLAND_CODE_LENGTH);
+    for (int i = 0; i < HOLLAND_CODE_LENGTH; i++) {
+      code.append(HOLLAND_ORDER[order.get(i)]);
+    }
+    return code.toString();
   }
 
   private static Integer extractScore(String text, String group) {

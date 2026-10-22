@@ -287,7 +287,50 @@ class PaymentServiceTest {
     String riasec = saved.getValue().getRiasecJson();
     assertThat(riasec).contains("\"R\":4").contains("\"S\":6");
     assertThat(riasec).doesNotContain("\"A\":99");
-    assertThat(PaymentService.hollandCode(riasec)).isEqualTo("S");
+    // Mã Holland = 3 CHỮ (3 nhóm điểm cao nhất): S=6 > R=4 > (I=A=E=C=0, hoà
+    // ⇒ I thắng vì I đứng trước A/E/C trong thứ tự lục giác R→I→A→S→E→C).
+    assertThat(PaymentService.hollandCode(riasec)).isEqualTo("SRI");
+  }
+
+  /**
+   * Mã Holland là <b>3 CHỮ</b> — 3 nhóm RIASEC có điểm cao nhất (thứ nhất →
+   * thứ hai → thứ ba), đúng lý thuyết John Holland.
+   *
+   * <p>Vì sao phải 3 chữ: mã 1 chữ chỉ nói "nghề này hợp với nhóm mạnh nhất"
+   * ⇒ KHÔNG đủ để tính được nghề nào hợp. Mã 3 chữ mới định hướng được nghề.
+   *
+   * <p>Fixture dùng chung với client ({@code lib/features/game/domain/holland.dart})
+   * ⇒ server và client KHÔNG được lệch.
+   */
+  @Test
+  void maHollandLaBaChu() {
+    assertThat(PaymentService.hollandCode("{\"R\":5,\"I\":14,\"A\":2,\"S\":8,\"E\":2,\"C\":4}"))
+        .isEqualTo("ISR");
+  }
+
+  /**
+   * Hoà điểm ở hạng 3 (A=4, C=4) ⇒ <b>A thắng</b>, vì A đứng trước C trong
+   * thứ tự lục giác R→I→A→S→E→C.
+   *
+   * <p>Đây là fixture kiểm chứng dùng chung với client.
+   */
+  @Test
+  void maHollandTieuHoaDiemTheoThuTuLucGiac() {
+    assertThat(PaymentService.hollandCode("{\"R\":0,\"I\":14,\"A\":4,\"S\":8,\"E\":2,\"C\":4}"))
+        .isEqualTo("ISA");
+  }
+
+  /**
+   * JSON hỏng / rỗng ⇒ mã Holland rỗng, KHÔNG crash (ảnh chụp RIASEC có thể
+   * bị dọn mất hoặc hỏng).
+   */
+  @Test
+  void maHollandRongKhiJsonHong() {
+    assertThat(PaymentService.hollandCode(null)).isEmpty();
+    assertThat(PaymentService.hollandCode("")).isEmpty();
+    assertThat(PaymentService.hollandCode("   ")).isEmpty();
+    assertThat(PaymentService.hollandCode("khong phai JSON")).isEmpty();
+    assertThat(PaymentService.hollandCode("{\"R\":")).isEmpty();
   }
 
   @Test

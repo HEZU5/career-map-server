@@ -212,7 +212,7 @@ class PaymentControllerTest {
    * {@code playerKey} đoán được ({@code host-<mã phòng>}) và mã phòng công khai
    * ⇒ lịch sử KHÔNG được chứa {@code riasecJson} (nội dung báo cáo đã trả
    * tiền — kể cả đơn CHƯA thanh toán) và cũng KHÔNG chứa {@code hollandCode}
-   * (1 chữ cái đủ để đoán ra loại báo cáo của người khác).
+   * (3 chữ = mã Holland đầy đủ, đủ để đoán ra loại báo cáo của người khác).
    */
   @Test
   void lichSuKhongTraNoiDungBaoCao() throws Exception {
@@ -256,7 +256,7 @@ class PaymentControllerTest {
 
     mvc.perform(get("/api/payments/mine").param("playerKey", "p"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.hollandCode").value("S"))
+        .andExpect(jsonPath("$.hollandCode").value("SRE"))
         .andExpect(jsonPath("$.riasecJson").value(containsString("\"S\":6")))
         .andExpect(jsonPath("$.createdAt").exists());
   }
@@ -271,7 +271,7 @@ class PaymentControllerTest {
    * cả đơn CHƯA thanh toán ⇒ người chơi tạo đơn rồi gọi API là có báo cáo
    * MIỄN PHÍ (đúng thứ 50.000đ phải mua).
    *
-   * <p>Mã Holland (1 chữ) thì vẫn trả — chủ dự án chấp nhận mức lộ này.
+   * <p>Mã Holland (3 chữ) thì vẫn trả — chủ dự án chấp nhận mức lộ này.
    */
   @Test
   void traTrangThaiDonChuaThanhToanKhongLoNoiDungBaoCao() throws Exception {
@@ -282,7 +282,7 @@ class PaymentControllerTest {
     mvc.perform(get("/api/payments/pending").param("playerKey", "p"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("PENDING"))
-        .andExpect(jsonPath("$.hollandCode").value("I"))
+        .andExpect(jsonPath("$.hollandCode").value("ISC"))
         .andExpect(jsonPath("$.riasecJson").value(""))
         .andExpect(content().string(not(containsString("\"I\":14"))));
   }
@@ -303,7 +303,7 @@ class PaymentControllerTest {
     mvc.perform(get("/api/payments/expired").param("playerKey", "p"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("EXPIRED"))
-        .andExpect(jsonPath("$.hollandCode").value("I"))
+        .andExpect(jsonPath("$.hollandCode").value("ISC"))
         .andExpect(jsonPath("$.riasecJson").value(""))
         .andExpect(content().string(not(containsString("\"I\":14"))));
   }
@@ -319,7 +319,7 @@ class PaymentControllerTest {
     mvc.perform(get("/api/payments/paid").param("playerKey", "p"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("PAID"))
-        .andExpect(jsonPath("$.hollandCode").value("I"))
+        .andExpect(jsonPath("$.hollandCode").value("ISC"))
         .andExpect(jsonPath("$.riasecJson").value(containsString("\"I\":14")));
   }
 }
