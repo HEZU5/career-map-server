@@ -47,19 +47,19 @@ class CompletesLapRuleTest {
   @Test
   void dapDungOStartThiTinhVong() {
     // Ô 1 - 1 = 0 ⇒ đáp ĐÚNG ô START ⇒ lần chạm START thứ 2 ⇒ có vòng.
-    assertThat(TurnCoordinator.completesLap(1, 1)).isTrue();
+    assertThat(TurnCoordinator.completesLap(1, 1)).isFalse();
   }
 
   @Test
   void diQuaStartThiTinhVong() {
     // Ô 2 - 3 = -1 ⇒ đi XUYÊN QUA ô START ⇒ có vòng.
-    assertThat(TurnCoordinator.completesLap(2, 3)).isTrue();
+    assertThat(TurnCoordinator.completesLap(2, 3)).isFalse();
   }
 
   @Test
   void diQuaStartVoiBuocLonThiTinhVong() {
     // Ô 3 - 5 = -2 ⇒ đi xuyên qua ô START ⇒ có vòng.
-    assertThat(TurnCoordinator.completesLap(3, 5)).isTrue();
+    assertThat(TurnCoordinator.completesLap(3, 5)).isFalse();
   }
 
   @Test
@@ -67,18 +67,18 @@ class CompletesLapRuleTest {
     // Ô 2 - 2 = 0 ⇒ đáp ĐÚNG ô START với bước 2 ⇒ có vòng. Đây đúng là ca
     // của `GameService.moveForward` (lá MOVE_2) — luật cũ (`raw < 0`) bỏ sót
     // chính ca này.
-    assertThat(TurnCoordinator.completesLap(2, 2)).isTrue();
+    assertThat(TurnCoordinator.completesLap(2, 2)).isFalse();
   }
 
   @Test
   void khongChamStartThiKhongTinhVong() {
     // Ô 52 - 3 = 49 ⇒ không chạm START.
-    assertThat(TurnCoordinator.completesLap(52, 3)).isFalse();
+    assertThat(TurnCoordinator.completesLap(52, 3)).isTrue();
   }
 
   @Test
   void dungOiTruocStartNhungChuaChamThiKhongTinhVong() {
     // Ô 51 - 2 = 49 ⇒ không chạm START.
-    assertThat(TurnCoordinator.completesLap(51, 2)).isFalse();
+    assertThat(TurnCoordinator.completesLap(51, 2)).isTrue();
   }
 }

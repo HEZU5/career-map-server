@@ -313,7 +313,7 @@ class BonusEffectTest {
   void coHoi03DiThem2O() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(10);
+    p1.setCurrentPosition(6);
     openCardTurn(room, p1, "CƠ HỘI 03");
 
     BonusEffectResponse res =
@@ -321,7 +321,7 @@ class BonusEffectTest {
 
     assertThat(res.effect()).isEqualTo("MOVE_2");
     assertThat(res.winPoints()).isZero();
-    assertThat(res.fromPosition()).isEqualTo(10);
+    assertThat(res.fromPosition()).isEqualTo(6);
     assertThat(res.toPosition()).isEqualTo(8);
     assertThat(p1.getCurrentPosition()).isEqualTo(8);
     // Lá này thay bằng việc đi ⇒ KHÔNG cộng điểm.
@@ -338,7 +338,7 @@ class BonusEffectTest {
     // nếu không client vẫn hiện mặt xúc xắc của lượt trước.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(10);
+    p1.setCurrentPosition(6);
     openCardTurn(room, p1, "CƠ HỘI 03");
     room.setLastDice(5);
 
@@ -351,7 +351,7 @@ class BonusEffectTest {
   void coHoi09DiThem3O() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(3);
+    p1.setCurrentPosition(50);
     openCardTurn(room, p1, "CƠ HỘI 09");
 
     BonusEffectResponse res =
@@ -359,7 +359,7 @@ class BonusEffectTest {
 
     assertThat(res.effect()).isEqualTo("MOVE_3");
     assertThat(res.winPoints()).isZero();
-    assertThat(res.fromPosition()).isEqualTo(3);
+    assertThat(res.fromPosition()).isEqualTo(50);
     assertThat(res.toPosition()).isEqualTo(0); // về đúng ô START
     assertThat(p1.getCurrentPosition()).isEqualTo(0);
     // Đích là START (không phải ô thẻ) → đóng lượt, sang người kế tiếp.
@@ -371,14 +371,14 @@ class BonusEffectTest {
   void quaStartBangHieuUngThiCongVong() {
     // 1 - 3 = -2 ⇒ vượt qua START ⇒ phải cộng 1 vòng, nếu không người chơi
     // đi qua START bằng hiệu ứng sẽ không bao giờ đủ điều kiện thắng.
-    Room room = room("p1", player("p1", 1), player("p2", 10));
+    Room room = room("p1", player("p1", 50), player("p2", 10));
     Player p1 = room.findPlayer("p1");
     openCardTurn(room, p1, "CƠ HỘI 09");
 
     service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 09", null, null, null));
 
     assertThat(p1.getCompletedLaps()).isEqualTo(1);
-    assertThat(p1.getCurrentPosition()).isEqualTo(51);
+    assertThat(p1.getCurrentPosition()).isZero();
   }
 
   @Test
@@ -389,7 +389,7 @@ class BonusEffectTest {
     // một vòng nữa mới thắng.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(3);
+    p1.setCurrentPosition(50);
     openCardTurn(room, p1, "CƠ HỘI 09");
 
     BonusEffectResponse res =
@@ -405,7 +405,7 @@ class BonusEffectTest {
     // Ô 2 - 2 = 0 ⇒ đáp ĐÚNG ô START bằng lá MOVE_2 ⇒ cũng phải cộng 1 vòng.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(2);
+    p1.setCurrentPosition(51);
     openCardTurn(room, p1, "CƠ HỘI 03");
 
     BonusEffectResponse res =
@@ -422,7 +422,7 @@ class BonusEffectTest {
     // chơi phải đi thêm một vòng nữa mới thắng.
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(3);
+    p1.setCurrentPosition(50);
     for (int i = 0; i < 15; i++) {
       p1.incrementTotalAnswered();
     }
@@ -604,14 +604,14 @@ class BonusEffectTest {
   void coHoi10ChonDiThem2O() {
     Room room = room("p1", player("p1", 10), player("p2", 10));
     Player p1 = room.findPlayer("p1");
-    p1.setCurrentPosition(10);
+    p1.setCurrentPosition(6);
     openCardTurn(room, p1, "CƠ HỘI 10");
 
     BonusEffectResponse res =
         service().applyBonusEffect(new BonusEffectRequest("p1", "CƠ HỘI 10", "MOVE_2", null, null));
 
     assertThat(res.winPoints()).isZero();
-    assertThat(res.fromPosition()).isEqualTo(10);
+    assertThat(res.fromPosition()).isEqualTo(6);
     assertThat(res.toPosition()).isEqualTo(8);
     assertThat(p1.getCurrentPosition()).isEqualTo(8);
     assertThat(p1.getWinPoints()).isZero();

@@ -124,13 +124,13 @@ class CompletedLapsTest {
     turns.rollForTurn(room, p, room.getTurnId(), false, "manual");
 
     assertThat(p.getCompletedLaps()).isZero();
-    assertThat(p.getCurrentPosition()).isEqualTo(50);
+    assertThat(p.getCurrentPosition()).isEqualTo(3);
   }
 
   @Test
   void quanDungOCellMotThiTungMotDapDungOStartThiCongMotVong() {
     // Ô 1 - 1 = 0 ⇒ đáp ĐÚNG ô START ⇒ đây mới là lần chạm START thứ 2.
-    Room room = room("p1", player("p1", 1));
+    Room room = room("p1", player("p1", 52));
     Player p = room.findPlayer("p1");
     moLuot(room, p);
     TurnCoordinator turns = turns(1);
@@ -144,7 +144,7 @@ class CompletedLapsTest {
   @Test
   void quanDungOCellHaiThiTungBaDiQuaStartThiCongMotVong() {
     // Ô 2 - 3 = -1 ⇒ đi XUYÊN QUA ô START ⇒ cũng tính 1 vòng.
-    Room room = room("p1", player("p1", 2));
+    Room room = room("p1", player("p1", 50));
     Player p = room.findPlayer("p1");
     moLuot(room, p);
     TurnCoordinator turns = turns(3);
@@ -153,13 +153,13 @@ class CompletedLapsTest {
 
     assertThat(p.getCompletedLaps()).isEqualTo(1);
     // 2 - 3 = -1 ⇒ floorMod(-1, 53) = 52 (quân đi ngược chiều mũi tên).
-    assertThat(p.getCurrentPosition()).isEqualTo(52);
+    assertThat(p.getCurrentPosition()).isEqualTo(0);
   }
 
   @Test
   void vongMoiChuaXongThiKhongCongThemVong() {
     // Đã về tới START (vòng 1) rồi rời START ⇒ vòng 2 CHƯA xong.
-    Room room = room("p1", player("p1", 1));
+    Room room = room("p1", player("p1", 52));
     Player p = room.findPlayer("p1");
     TurnCoordinator turns = turns(1);
 
@@ -170,13 +170,13 @@ class CompletedLapsTest {
     moLuot(room, p);
     turns.rollForTurn(room, p, room.getTurnId(), false, "manual");
     assertThat(p.getCompletedLaps()).isEqualTo(1);
-    assertThat(p.getCurrentPosition()).isEqualTo(52);
+    assertThat(p.getCurrentPosition()).isEqualTo(1);
   }
 
   @Test
   void khongChamStartThiKhongCongVong() {
     // Ô 52 - 3 = 49 ⇒ không chạm START ⇒ không cộng vòng.
-    Room room = room("p1", player("p1", 52));
+    Room room = room("p1", player("p1", 49));
     Player p = room.findPlayer("p1");
     moLuot(room, p);
     TurnCoordinator turns = turns(3);
@@ -203,7 +203,7 @@ class CompletedLapsTest {
   @Test
   void vanSoloDiQuaStartThiCongMotVong() {
     // Ô 2 - 3 = -1 ⇒ đi xuyên qua START ⇒ cộng 1 vòng.
-    Player p = player("solo", 2);
+    Player p = player("solo", 50);
     byKey.put("solo", p);
     GameService service = service(turns(3));
 
@@ -234,7 +234,7 @@ class CompletedLapsTest {
   @Test
   void chamStartLan2VaDu15CauThiVanKetThuc() {
     // Ô 1 - 1 = 0 ⇒ đáp đúng ô START (lần thứ 2) + đủ 15 câu ⇒ ván tự kết thúc.
-    Player p = player("owner", 1, 15);
+    Player p = player("owner", 52, 15);
     Room room = room("owner", p);
     moLuot(room, p);
     GameService service = service(turns(1));

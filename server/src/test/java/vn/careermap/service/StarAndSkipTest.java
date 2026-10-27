@@ -132,11 +132,11 @@ class StarAndSkipTest {
     // Ô 8 (CHANCE) + xúc xắc 1 ⇒ rơi vào ô 7 = ⭐. Trước đây ô ⭐ KHÔNG mở
     // lượt trả lời ⇒ server không bao giờ biết người chơi dừng ở ô sao ⇒ +1
     // điểm chỉ có ở máy client ⇒ bảng xếp hạng trên server sai.
-    Room room = room("p1", player("p1", 8), player("p2", 10));
+    Room room = room("p1", player("p1", 5), player("p2", 10));
     Player p1 = room.findPlayer("p1");
 
     room.beginTurn(p1, TurnPhase.WAITING_ROLL, Instant.now().plusSeconds(60), false);
-    turns(1).rollForTurn(room, p1, room.getTurnId(), false, "manual");
+    turns(2).rollForTurn(room, p1, room.getTurnId(), false, "manual");
 
     assertThat(p1.getCurrentPosition()).isEqualTo(7);
     assertThat(TurnCoordinator.pathTile(7)).isEqualTo(TileType.STAR);

@@ -104,7 +104,7 @@ class ServerCardDrawTest {
   @Test
   void roiVaoOCoHoiThiServerRutLaCoHoi() {
     // Ô 10 (E) + xúc xắc 1 ⇒ rơi vào ô 9 = CHANCE.
-    Room room = room("p1", player("p1", 10), player("p2", 10));
+    Room room = room("p1", player("p1", 8), player("p2", 10));
     Player p1 = room.findPlayer("p1");
 
     rollTo(room, p1, 1);
@@ -119,7 +119,7 @@ class ServerCardDrawTest {
   @Test
   void roiVaoOThuThachThiServerRutLaThuThach() {
     // Ô 4 (I) + xúc xắc 1 ⇒ rơi vào ô 3 = CHALLENGE.
-    Room room = room("p1", player("p1", 4), player("p2", 10));
+    Room room = room("p1", player("p1", 2), player("p2", 10));
     Player p1 = room.findPlayer("p1");
 
     rollTo(room, p1, 1);
@@ -136,7 +136,7 @@ class ServerCardDrawTest {
   void roiVaoORiasecThiKhongRutLa() {
     // Ô 14 (CHANCE) + xúc xắc 1 ⇒ rơi vào ô 13 = ô RIASEC ⇒ có lượt trả lời
     // nhưng KHÔNG có lá bài.
-    Room room = room("p1", player("p1", 14), player("p2", 10));
+    Room room = room("p1", player("p1", 12), player("p2", 10));
     Player p1 = room.findPlayer("p1");
 
     rollTo(room, p1, 1);
@@ -153,7 +153,7 @@ class ServerCardDrawTest {
     // cấp lá GIẢ "SAO" (+1 điểm). Trước đây ô ⭐ không mở lượt trả lời ⇒
     // server không biết người chơi dừng ở ô sao ⇒ client tự cộng +1 ở máy ⇒
     // bảng xếp hạng trên server sai.
-    Room room = room("p1", player("p1", 8), player("p2", 10));
+    Room room = room("p1", player("p1", 6), player("p2", 10));
     Player p1 = room.findPlayer("p1");
 
     rollTo(room, p1, 1);
@@ -197,7 +197,7 @@ class ServerCardDrawTest {
   @Test
   void rollDiceTraVeCardIdDeClientHienThi() {
     // Client cần biết server cấp lá nào ⇒ DiceResponse phải mang cardId.
-    Room room = room("p1", player("p1", 10), player("p2", 10));
+    Room room = room("p1", player("p1", 8), player("p2", 10));
     Player p1 = room.findPlayer("p1");
     room.beginTurn(p1, TurnPhase.WAITING_ROLL, Instant.now().plusSeconds(60), false);
 

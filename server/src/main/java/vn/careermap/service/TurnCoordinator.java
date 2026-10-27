@@ -113,7 +113,7 @@ public class TurnCoordinator {
     room.recordRoll(roller.getPlayerKey(), value, auto);
 
     int pos = roller.getCurrentPosition();
-    int raw = pos - value;
+    int raw = pos + value;
     int next = Math.floorMod(raw, PATH.size());
     roller.setCurrentPosition(next);
     if (completesLap(pos, value)) {
@@ -261,7 +261,7 @@ public class TurnCoordinator {
    * {@code completedLaps} chỉ nhích khi quân quay LẠI chạm ô START — tức "lần thứ 2".
    */
   public static boolean completesLap(int pos, int value) {
-    return (pos - value) <= 0 && pos != 0;
+    return (pos + value) >= PATH.size() && pos != 0;
   }
 
   /**

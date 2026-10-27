@@ -168,7 +168,7 @@ public class GameService {
   private DiceResponse rollSolo(Player player) {
     int value = turns.rollValue();
     int pos = player.getCurrentPosition();
-    int raw = pos - value;
+    int raw = pos + value;
     int next = Math.floorMod(raw, TurnCoordinator.pathSize());
     player.setCurrentPosition(next);
     // Cùng công thức với {@code TurnCoordinator.rollAndMove}: chỉ lần chạm ô
@@ -634,7 +634,7 @@ public class GameService {
    */
   private MoveResult moveForward(Player player, Room room, int steps) {
     int from = player.getCurrentPosition();
-    int raw = from - steps;
+    int raw = from + steps;
     int to = Math.floorMod(raw, TurnCoordinator.pathSize());
     player.setCurrentPosition(to);
     // Cùng công thức với {@code TurnCoordinator.rollAndMove}: CHẠM tới ô

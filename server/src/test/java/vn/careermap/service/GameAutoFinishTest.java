@@ -224,7 +224,7 @@ class GameAutoFinishTest {
     // Không có phòng ⇒ không có chỗ broadcast ⇒ trạng thái kết thúc phải đi
     // kèm response.
     Player p = player("solo", 0, 12);
-    p.setCurrentPosition(2); // đứng sát ô START: 2 - 3 = -1 ⇒ đi qua START
+    p.setCurrentPosition(50); // d?ng s�t cu?i v?ng: 50 + 3 = 53 ? di qua START
     byKey.put("solo", p);
     GameService gameService = service(RULES);
     when(turns.rollValue()).thenReturn(3);
@@ -241,7 +241,7 @@ class GameAutoFinishTest {
   @Test
   void vanSoloKhongDuDieuKienThiKhongKetThuc() {
     Player p = player("solo", 0, 11);
-    p.setCurrentPosition(2);
+    p.setCurrentPosition(50);
     byKey.put("solo", p);
     GameService gameService = service(RULES);
     when(turns.rollValue()).thenReturn(3);
