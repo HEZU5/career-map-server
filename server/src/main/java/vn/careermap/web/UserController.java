@@ -43,6 +43,7 @@ public class UserController {
         user.getFirebaseUid(),
         user.getEmail(),
         user.getDisplayName(),
-        user.getPhotoURL()));
+        user.getPhotoURL(),
+        user.getRole() == null ? "USER" : user.getRole().name()));
   }
 }
