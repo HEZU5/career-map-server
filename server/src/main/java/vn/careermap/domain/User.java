@@ -2,6 +2,8 @@ package vn.careermap.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
@@ -32,6 +34,11 @@ public class User {
   @Column(length = 1024)
   private String photoURL;
 
+  /** Vai trò: USER (mặc định) hoặc ADMIN. */
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 16, columnDefinition = "varchar(16) not null default 'USER'")
+  private UserRole role = UserRole.USER;
+
   @Column(nullable = false)
   private Instant createdAt;
 
@@ -47,6 +54,7 @@ public class User {
     this.email = email;
     this.displayName = displayName;
     this.photoURL = photoURL;
+    this.role = UserRole.USER;
     Instant now = Instant.now();
     this.createdAt = now;
     this.updatedAt = now;
@@ -78,6 +86,14 @@ public class User {
 
   public void setPhotoURL(String photoURL) {
     this.photoURL = photoURL;
+  }
+
+  public UserRole getRole() {
+    return role;
+  }
+
+  public void setRole(UserRole role) {
+    this.role = role;
   }
 
   public Instant getCreatedAt() {
