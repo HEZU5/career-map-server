@@ -21,7 +21,7 @@ class AdminControllerTest {
 
   @Test
   void chuaCauHinhSecretTraVe503() {
-    AdminController c = new AdminController(service);
+    AdminController c = new AdminController(service, "");
     assertThat(c.listUsers(null, null).getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     assertThat(c.changeRole("abc", new ChangeRoleRequest("ADMIN"), null, null).getStatusCode())
         .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);

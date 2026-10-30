@@ -2,6 +2,7 @@ package vn.careermap.web;
 
 import java.util.List;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,14 +37,12 @@ public class AdminController {
 
   private final UserService userService;
 
-  @Value("${app.admin-secret-key:}")
-  private String adminSecret;
+  private final String adminSecret;
 
-  public AdminController(UserService userService) {
-    this.userService = userService;
-  }
-
-  AdminController(UserService userService, String adminSecret) {
+  @Autowired
+  public AdminController(
+      UserService userService,
+      @Value("${app.admin-secret-key:}") String adminSecret) {
     this.userService = userService;
     this.adminSecret = adminSecret;
   }
