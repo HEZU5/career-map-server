@@ -12,6 +12,11 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Stri
    *  của người khác. */
   Optional<PaymentOrder> findByIdAndPlayerKey(String id, String playerKey);
 
+  /** Find an order from the unique code embedded in a bank-transfer QR. */
+  Optional<PaymentOrder> findByPaymentCode(String paymentCode);
+
+  boolean existsByPaymentCode(String paymentCode);
+
   /** Lịch sử đơn của một người, mới nhất trước. */
   List<PaymentOrder> findByPlayerKeyOrderByCreatedAtDesc(String playerKey);
 

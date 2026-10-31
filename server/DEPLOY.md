@@ -280,3 +280,24 @@ KHÔNG được 415, KHÔNG được 400, KHÔNG được 405.
   tay: `DROP TABLE room_riasec_snapshot;`
 - Cột `payment_orders.room_code` nay cho phép NULL (đơn tạo sau khi phòng đã
   bị dọn vẫn ghi được thay vì lỗi 500).
+
+## 7. Chuyển khoản SePay (thay cho VNPay)
+
+SePay nhận tiền vào tài khoản ngân hàng bạn đã liên kết. Trên Render, tạo các biến môi trường sau (không đưa webhook secret vào mã nguồn):
+
+| Biến | Giá trị |
+| --- | --- |
+| `PAYMENT_PROVIDER` | `SEPAY` |
+| `PAYMENT_ENABLED` | `true` |
+| `SEPAY_BANK` | Mã ngân hàng mà SePay/VietQR yêu cầu (ví dụ `MB`, `VCB`) |
+| `SEPAY_ACCOUNT_NUMBER` | Số tài khoản ngân hàng đã liên kết |
+| `SEPAY_ACCOUNT_HOLDER` | Tên chủ tài khoản |
+| `SEPAY_PAYMENT_CODE_PREFIX` | `CM` (phải trùng cấu hình mã thanh toán tại SePay) |
+| `SEPAY_WEBHOOK_SECRET` | Secret HMAC-SHA256 riêng cho webhook SePay |
+| `SEPAY_MEMO_PREFIX` | Để trống; chỉ đặt nếu ngân hàng của bạn bắt buộc tiền tố |
+
+Trong SePay, bật nhận diện mã thanh toán với tiền tố `CM`, hậu tố 8 ký tự chữ hoa/số. Tạo webhook loại **tiền vào** cho tài khoản đã liên kết, xác thực **HMAC-SHA256**, URL:
+
+`https://<render-service>/api/payments/sepay/webhook`
+
+App tạo QR VietQR với số tiền và nội dung riêng cho từng đơn; không chỉnh nội dung khi chuyển khoản. Khi callback có chữ ký hợp lệ, đúng mã đơn và đúng số tiền, server tự cập nhật đơn sang PAID. Giữ `PAYMENT_PROVIDER` ở `vnpay` để tiếp tục dùng VNPay.

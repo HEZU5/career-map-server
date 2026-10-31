@@ -36,4 +36,10 @@ public record PaymentStatusResponse(
     Instant createdAt,
     Instant expiresAt,
     String hollandCode,
-    String riasecJson) {}
+    String riasecJson,
+    String paymentMethod,
+    String paymentCode,
+    String qrUrl,
+    String bankName,
+    String accountNumber,
+    String accountHolder) {}

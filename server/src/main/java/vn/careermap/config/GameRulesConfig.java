@@ -102,7 +102,7 @@ public class GameRulesConfig {
       @Value("${payment.ttl-minutes:15}") long paymentTtlMinutes,
       @Value("${game.win-min-laps:1}") int winMinLaps,
       @Value("${game.win-min-answers:15}") int winMinAnswers,
-      @Value("${vnpay.enabled:false}") boolean vnpayEnabled,
+      @Value("${payment.enabled:${vnpay.enabled:false}}") boolean vnpayEnabled,
       @Value("${game.win-bonus-points:5}") long winBonusPoints) {
     this.turnRollS = turnRollS;
     this.answerTimeoutS = answerTimeoutS;

@@ -29,6 +29,15 @@ public class PaymentOrder {
   @Column(nullable = false, unique = true, length = 64)
   private String id;
 
+  /** Provider recorded at order creation; null on pre-provider legacy rows. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "payment_provider", length = 16)
+  private PaymentProvider paymentProvider;
+
+  /** Short unique transfer memo matched against a SePay webhook. */
+  @Column(name = "payment_code", unique = true, length = 20)
+  private String paymentCode;
+
   /** Khoá người chơi mua — dùng tra/kiểm quyền sở hữu đơn. */
   @Column(nullable = false, length = 64)
   private String playerKey;
@@ -88,8 +97,22 @@ public class PaymentOrder {
    */
   public static PaymentOrder create(
       String id, String playerKey, String roomCode, long amount, long ttlMinutes) {
+    return create(id, playerKey, roomCode, amount, ttlMinutes, PaymentProvider.VNPAY, null);
+  }
+
+  /** Create an order owned by one payment provider. */
+  public static PaymentOrder create(
+      String id,
+      String playerKey,
+      String roomCode,
+      long amount,
+      long ttlMinutes,
+      PaymentProvider paymentProvider,
+      String paymentCode) {
     PaymentOrder order = new PaymentOrder();
     order.id = id;
+    order.paymentProvider = paymentProvider;
+    order.paymentCode = paymentCode;
     order.playerKey = playerKey;
     order.roomCode = roomCode;
     order.amount = amount;
@@ -123,6 +146,14 @@ public class PaymentOrder {
 
   public String getId() {
     return id;
+  }
+
+  public PaymentProvider getPaymentProvider() {
+    return paymentProvider == null ? PaymentProvider.VNPAY : paymentProvider;
+  }
+
+  public String getPaymentCode() {
+    return paymentCode;
   }
 
   public String getPlayerKey() {

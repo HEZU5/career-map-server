@@ -9,7 +9,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
+import java.security.SecureRandom;
+import java.nio.charset.StandardCharsets;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.MessageDigest;
+import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.util.UriComponentsBuilder;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,8 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import vn.careermap.config.GameRulesConfig;
 import vn.careermap.config.VnpayConfig;
+import vn.careermap.config.SePayConfig;
 import vn.careermap.domain.PaymentOrder;
 import vn.careermap.domain.PaymentStatus;
+import vn.careermap.domain.PaymentProvider;
 import vn.careermap.domain.Player;
 import vn.careermap.domain.Room;
 import vn.careermap.exception.PaymentInfrastructureException;
@@ -130,6 +141,9 @@ public class PaymentService {
   private final GameService gameService;
   private final VnpaySignatureService signatureService;
   private final VnpayConfig vnpayConfig;
+  private final SePayConfig sePayConfig;
+  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+  private static final char[] CODE_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
 
   public PaymentService(
       GameRulesConfig rules,
@@ -138,12 +152,26 @@ public class PaymentService {
       GameService gameService,
       VnpaySignatureService signatureService,
       VnpayConfig vnpayConfig) {
+    this(rules, playerRepository, orderRepository, gameService, signatureService,
+        vnpayConfig, SePayConfig.vnpayDefaults());
+  }
+
+  @Autowired
+  public PaymentService(
+      GameRulesConfig rules,
+      PlayerRepository playerRepository,
+      PaymentOrderRepository orderRepository,
+      GameService gameService,
+      VnpaySignatureService signatureService,
+      VnpayConfig vnpayConfig,
+      SePayConfig sePayConfig) {
     this.rules = rules;
     this.playerRepository = playerRepository;
     this.orderRepository = orderRepository;
     this.gameService = gameService;
     this.signatureService = signatureService;
     this.vnpayConfig = vnpayConfig;
+    this.sePayConfig = sePayConfig;
     for (int i = 0; i < LOCK_STRIPES; i++) {
       orderLocks[i] = new Object();
     }
@@ -183,7 +211,12 @@ public class PaymentService {
     // Thanh toán đang tắt -> KHÔNG tạo đơn rác (payUrl rỗng/không ký được).
     // Client đã ẩn nút mua khi vnpay.enabled=false, nhưng client cũ hoặc
     // gọi API trực tiếp vẫn tới được đây — chặn ở server là lớp chắn cuối.
-    if (!vnpayConfig.isEnabled()) {
+    if (sePayConfig.usesSePay()) {
+      if (!rules.isVnpayEnabled() || !sePayConfig.isSePayReady()) {
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+            "Thanh toán chuyển khoản chưa được bật hoặc cấu hình đầy đủ.");
+      }
+    } else if (!vnpayConfig.isEnabled()) {
       throw new ResponseStatusException(
           HttpStatus.SERVICE_UNAVAILABLE,
           "Thanh toán VNPay đang tạm thời không khả dụng. Vui lòng thử lại sau.");
@@ -195,7 +228,7 @@ public class PaymentService {
     //  - thiếu ReturnUrl  -> người chơi thanh toán xong không được đưa về app.
     //  - thiếu IpnUrl     -> server KHÔNG nhận IPN -> đơn kẹt PENDING -> hết
     //    15 phút thành EXPIRED dù người chơi ĐÃ trả tiền.
-    if (!vnpayConfig.isConfigured()) {
+    if (!sePayConfig.usesSePay() && !vnpayConfig.isConfigured()) {
       String missing = String.join(", ", vnpayConfig.missingSettings());
       log.warn("VNPay đang bật nhưng cấu hình chưa đủ (thiếu: {}) - chặn tạo đơn.", missing);
       throw new ResponseStatusException(
@@ -243,16 +276,22 @@ public class PaymentService {
       Instant now = Instant.now();
       Optional<PaymentOrder> existing = orderRepository
           .findFirstByPlayerKeyAndStatusOrderByCreatedAtDesc(playerKey, PaymentStatus.PENDING);
-      if (existing.isPresent() && !existing.get().isExpiredAt(now)) {
+      if (existing.isPresent() && !existing.get().isExpiredAt(now)
+          && existing.get().getPaymentProvider() == currentProvider()) {
         return toResponse(existing.get(), clientIp);
       }
+
+      existing.filter(order -> order.getStatus() == PaymentStatus.PENDING)
+          .ifPresent(PaymentOrder::markExpired);
+
+      String paymentCode = sePayConfig.usesSePay() ? newPaymentCode() : null;
 
       PaymentOrder order = PaymentOrder.create(
           UUID.randomUUID().toString().replace("-", ""),
           playerKey,
           room.getCode(),
           rules.getPaymentAmountVnd(),
-          rules.getPaymentTtlMinutes());
+          rules.getPaymentTtlMinutes(), currentProvider(), paymentCode);
       order.setRiasecJson(riasecJson);
       orderRepository.save(order);
       return toResponse(order, clientIp);
@@ -267,6 +306,20 @@ public class PaymentService {
   }
 
   private CreatePaymentResponse toResponse(PaymentOrder order, String clientIp) {
+    if (order.getPaymentProvider() == PaymentProvider.SEPAY) {
+      String description = (sePayConfig.getMemoPrefix().isBlank() ? ""
+          : sePayConfig.getMemoPrefix() + " ") + order.getPaymentCode();
+      String qrUrl = UriComponentsBuilder.fromUriString("https://vietqr.app/img")
+          .queryParam("acc", sePayConfig.getAccountNumber())
+          .queryParam("bank", sePayConfig.getBank())
+          .queryParam("amount", order.getAmount())
+          .queryParam("des", description)
+          .queryParam("template", "compact")
+          .build().encode().toUriString();
+      return new CreatePaymentResponse(order.getId(), null, order.getExpiresAt(),
+          "SEPAY", order.getPaymentCode(), qrUrl, sePayConfig.getBank(),
+          sePayConfig.getAccountNumber(), sePayConfig.getAccountHolder());
+    }
     String createDate = VNPAY_DATE_TIME.format(order.getCreatedAt());
     String expireDate = VNPAY_DATE_TIME.format(order.getExpiresAt());
 
@@ -316,7 +369,74 @@ public class PaymentService {
     // tu tinh hash => hash cua ta != hash cua VNPay => bi tu choi.
 
     String payUrl = vnpayConfig.getBaseUrl() + "?" + signatureService.signedQueryString(params);
-    return new CreatePaymentResponse(order.getId(), payUrl, order.getExpiresAt());
+    return new CreatePaymentResponse(order.getId(), payUrl, order.getExpiresAt(),
+        "VNPAY", null, null, null, null, null);
+  }
+
+  private PaymentProvider currentProvider() {
+    return sePayConfig.usesSePay() ? PaymentProvider.SEPAY : PaymentProvider.VNPAY;
+  }
+
+  private String newPaymentCode() {
+    for (int attempt = 0; attempt < 10; attempt++) {
+      StringBuilder suffix = new StringBuilder(8);
+      for (int i = 0; i < 8; i++) suffix.append(CODE_CHARS[SECURE_RANDOM.nextInt(CODE_CHARS.length)]);
+      String code = sePayConfig.getPaymentCodePrefix() + suffix;
+      if (!orderRepository.existsByPaymentCode(code)) return code;
+    }
+    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+        "Không tạo được mã chuyển khoản, vui lòng thử lại.");
+  }
+
+  /** Verify and apply an authenticated SePay money-in notification. */
+  @Transactional
+  public String handleSePayWebhook(byte[] rawBody, String signatureHeader, String timestampHeader,
+      Map<String, Object> payload) {
+    String secret = sePayConfig.getWebhookSecret();
+    if (secret.isBlank()) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
+    if (!validSePaySignature(rawBody, signatureHeader, timestampHeader, secret)) {
+      throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Chữ ký webhook không hợp lệ.");
+    }
+    if (!"in".equalsIgnoreCase(String.valueOf(payload.get("transferType")))) return "{\"success\":true}";
+    String code = Objects.toString(payload.get("code"), "");
+    if (code.isBlank()) code = extractPaymentCode(Objects.toString(payload.get("content"), ""));
+    if (code.isBlank()) return "{\"success\":true}";
+    Optional<PaymentOrder> found = orderRepository.findByPaymentCode(code);
+    if (found.isEmpty()) return "{\"success\":true}";
+    PaymentOrder order = found.get();
+    Object amountValue = payload.get("transferAmount");
+    long amount;
+    try { amount = new java.math.BigDecimal(String.valueOf(amountValue)).longValueExact(); }
+    catch (Exception e) { return "{\"success\":true}"; }
+    if (order.getPaymentProvider() != PaymentProvider.SEPAY || amount != order.getAmount()) {
+      log.warn("SePay webhook did not match expected payment order {}", order.getId());
+      return "{\"success\":true}";
+    }
+    if (!order.isPaid()) {
+      order.markPaid(Instant.now());
+      orderRepository.save(order);
+    }
+    return "{\"success\":true}";
+  }
+
+  private static boolean validSePaySignature(byte[] body, String header, String timestamp, String secret) {
+    try {
+      if (header == null || !header.startsWith("sha256=") || timestamp == null) return false;
+      long ts = Long.parseLong(timestamp);
+      if (Math.abs(Instant.now().getEpochSecond() - ts) > 86400) return false;
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+      mac.update((timestamp + ".").getBytes(StandardCharsets.UTF_8));
+      byte[] expected = mac.doFinal(body);
+      byte[] supplied = java.util.HexFormat.of().parseHex(header.substring(7));
+      return MessageDigest.isEqual(expected, supplied);
+    } catch (Exception e) { return false; }
+  }
+
+  private String extractPaymentCode(String content) {
+    Pattern p = Pattern.compile("(?i)" + Pattern.quote(sePayConfig.getPaymentCodePrefix()) + "[0-9A-Z]{8}");
+    var matcher = p.matcher(content);
+    return matcher.find() ? matcher.group().toUpperCase() : "";
   }
 
   /** Chỉ thêm tham số khi giá trị không rỗng (rỗng thì KHÔNG gửi lên VNPay). */
@@ -713,6 +833,21 @@ public class PaymentService {
     // chụp RIASEC GỐC (không phải từ chuỗi đã che ở trên) để mã luôn đúng.
     // Chủ dự án chấp nhận mức lộ này để người chơi vẫn thấy được mã
     // của chính mình kể cả khi chưa thanh toán.
+    PaymentProvider provider = order.getPaymentProvider();
+    String qrUrl = null;
+    String bankName = null;
+    String accountNumber = null;
+    String accountHolder = null;
+    if (provider == PaymentProvider.SEPAY && !order.getPaymentCode().isBlank()) {
+      String description = (sePayConfig.getMemoPrefix().isBlank() ? ""
+          : sePayConfig.getMemoPrefix() + " ") + order.getPaymentCode();
+      qrUrl = UriComponentsBuilder.fromUriString("https://vietqr.app/img")
+          .queryParam("acc", sePayConfig.getAccountNumber()).queryParam("bank", sePayConfig.getBank())
+          .queryParam("amount", order.getAmount()).queryParam("des", description)
+          .queryParam("template", "compact").build().encode().toUriString();
+      bankName = sePayConfig.getBank(); accountNumber = sePayConfig.getAccountNumber();
+      accountHolder = sePayConfig.getAccountHolder();
+    }
     return new PaymentStatusResponse(
         order.getId(),
         order.getStatus().name(),
@@ -720,7 +855,8 @@ public class PaymentService {
         order.getCreatedAt(),
         order.getExpiresAt(),
         hollandCode(order.getRiasecJson()),
-        riasecJson);
+        riasecJson,
+        provider.name(), order.getPaymentCode(), qrUrl, bankName, accountNumber, accountHolder);
   }
 
   /**

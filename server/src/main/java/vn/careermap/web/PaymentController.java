@@ -3,6 +3,8 @@ package vn.careermap.web;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,9 +37,11 @@ import vn.careermap.web.dto.PaymentStatusResponse;
 public class PaymentController {
 
   private final PaymentService paymentService;
+  private final ObjectMapper objectMapper;
 
-  public PaymentController(PaymentService paymentService) {
+  public PaymentController(PaymentService paymentService, ObjectMapper objectMapper) {
     this.paymentService = paymentService;
+    this.objectMapper = objectMapper;
   }
 
   /**
@@ -94,6 +98,23 @@ public class PaymentController {
   @ResponseStatus(HttpStatus.OK)
   public String ipn(@RequestParam MultiValueMap<String, String> params) {
     return paymentService.handleIpn(toMap(params));
+  }
+
+  /** SePay signed webhook; pass raw bytes so HMAC is checked over exact body. */
+  @PostMapping(value = "/sepay/webhook", produces = "application/json")
+  @ResponseStatus(HttpStatus.OK)
+  public String sePayWebhook(
+      @RequestBody byte[] rawBody,
+      @RequestHeader(value = "X-SePay-Signature", required = false) String signature,
+      @RequestHeader(value = "X-SePay-Timestamp", required = false) String timestamp) {
+    final Map<String, Object> payload;
+    try {
+      payload = objectMapper.readValue(rawBody, new TypeReference<>() {});
+    } catch (Exception e) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Webhook không đúng định dạng.");
+    }
+    return paymentService.handleSePayWebhook(rawBody, signature, timestamp, payload);
   }
 
   /** IP đầu tiên trong {@code X-Forwarded-For}; rỗng nếu không có header. */
