@@ -279,9 +279,10 @@ public class PaymentService {
     params.put("vnp_ExpireDate", expireDate);
     params.put("vnp_CurrCode", "VND");
     params.put("vnp_Locale", "vn");
-    // Chọn thẳng phương thức VNPAY-QR để gateway hiển thị mã cần quét,
-    // thay vì dừng ở màn chọn ngân hàng/phương thức thanh toán.
-    params.put("vnp_BankCode", "VNPAYQR");
+    // Không ép vnp_BankCode=VNPAYQR: một số merchant/sandbox chưa được bật
+    // kênh này sẽ trả "Ngân hàng thanh toán không được hỗ trợ". Khi bỏ tham
+    // số, VNPay hiển thị các phương thức đã được cấu hình cho merchant; người
+    // dùng vẫn chọn QR tại cổng nếu tài khoản đã được kích hoạt VNPAY-QR.
     params.put("vnp_ReturnUrl", vnpaySafe(vnpayConfig.getReturnUrl(), "vnp_ReturnUrl"));
     params.put("vnp_IpnUrl", vnpaySafe(vnpayConfig.getIpnUrl(), "vnp_IpnUrl"));
     // vnp_OrderInfo: BAT BUOC (ca pay_web lan pay). ASCII khong dau; khoang
