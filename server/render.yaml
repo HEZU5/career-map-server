@@ -42,6 +42,9 @@ services:
       # Neon bắt buộc SSL.
       - key: PGSSLMODE
         value: require
+      # Không bật công cụ cộng điểm trên production.
+      - key: GAME_DEBUG_TOOLS_ENABLED
+        value: "false"
       # Tuỳ chọn: bỏ comment nếu đổi tên miền Firebase Hosting.
       # Mặc định trong application.properties đã gồm domain hiện tại.
       # - key: CORS_ALLOWED_ORIGINS

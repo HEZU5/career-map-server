@@ -166,8 +166,16 @@ public class Player {
     this.winPoints += points;
   }
 
+  public void setWinPoints(int winPoints) {
+    this.winPoints = winPoints;
+  }
+
   public void incrementTotalAnswered() {
     totalAnswered++;
+  }
+
+  public void setTotalAnswered(int totalAnswered) {
+    this.totalAnswered = totalAnswered;
   }
 
   public boolean isOrderRolled() {
@@ -196,6 +204,10 @@ public class Player {
 
   public void addCompletedLaps(int laps) {
     this.completedLaps += laps;
+  }
+
+  public void setCompletedLaps(int completedLaps) {
+    this.completedLaps = completedLaps;
   }
 
   public void setPlayOrder(int playOrder) {

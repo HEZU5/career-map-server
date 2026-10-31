@@ -75,6 +75,10 @@ public class GameRulesConfig {
    */
   public final boolean vnpayEnabled;
 
+  /** Công cụ cộng điểm online chỉ bật tường minh ở local/staging. */
+  @Value("${game.debug-tools-enabled:false}")
+  public boolean debugToolsEnabled;
+
   /**
    * Điểm chiến thắng cộng thêm cho người chơi đủ điều kiện khi ván tự kết thúc
    * (đi qua ô START).
@@ -166,6 +170,7 @@ public class GameRulesConfig {
         paymentTtlMinutes,
         winMinLaps,
         winMinAnswers,
-        vnpayEnabled);
+        vnpayEnabled,
+        debugToolsEnabled);
   }
 }

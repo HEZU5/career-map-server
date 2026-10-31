@@ -168,6 +168,10 @@ Chấp nhận cả `SHA512` và `HmacSHA512` cho `VNPAY_HASH_ALGORITHM`.
 |---|---|
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:*,http://127.0.0.1:*,https://career-map-2026-b08f1.web.app,https://career-map-2026-b08f1.firebaseapp.com` |
 
+### 2.5. Công cụ cộng điểm để test ván online
+
+`GAME_DEBUG_TOOLS_ENABLED` mặc định `false`. Chỉ đặt `true` khi chạy backend local hoặc staging để hiện menu cộng điểm và thử màn kết quả; **không bật ở production**. Cờ này cần khởi động lại backend và client đọc lại `/api/game/config`.
+
 ## 3. Trước khi bật `VNPAY_ENABLED=true`
 
 1. **Phải chạy 1 giao dịch THẬT trên sandbox** để xác nhận gateway chấp nhận

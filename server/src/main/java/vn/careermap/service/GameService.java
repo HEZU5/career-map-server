@@ -29,6 +29,7 @@ import vn.careermap.web.dto.AnswerResponse;
 import vn.careermap.web.dto.BonusEffectRequest;
 import vn.careermap.web.dto.BonusEffectResponse;
 import vn.careermap.web.dto.DiceResponse;
+import vn.careermap.web.dto.DebugPointsRequest;
 import vn.careermap.web.dto.FinishRequest;
 import vn.careermap.web.dto.GameSnapshot;
 import vn.careermap.web.dto.RiasecDescription;
@@ -719,6 +720,65 @@ public class GameService {
     }
     log.info("[FINISH] phong={} ket-thuc-boi={}", room.getCode(), player.getName());
     return finishWithWinner(room, pickWinner(room));
+  }
+
+  /** Cộng/trừ điểm debug phía server; chỉ hoạt động khi cờ local/staging bật. */
+  @Transactional
+  public GameSnapshot debugAdjustPoints(DebugPointsRequest request) {
+    requireDebugTools();
+    Player player = debugPlayerInPlayingRoom(request == null ? null : request.playerId());
+    int delta = request.delta();
+    if (delta == 0 || Math.abs((long) delta) > 100) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mức điểm test không hợp lệ");
+    }
+    if (request.category() == null || request.category().isBlank()) {
+      player.setWinPoints(Math.max(0, player.getWinPoints() + delta));
+    } else {
+      final RiasecCategory category;
+      try {
+        category = RiasecCategory.valueOf(request.category().trim().toUpperCase());
+      } catch (IllegalArgumentException e) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nhóm RIASEC không hợp lệ");
+      }
+      player.scoreOf(category).addPoints(delta);
+    }
+    Room room = player.getRoom();
+    GameSnapshot snapshot = snapshotBuilder.build(room);
+    broadcaster.gameUpdated(room.getCode(), snapshot);
+    return snapshot;
+  }
+
+  /** Đặt người chơi đủ điều kiện và có điểm thắng cao để thử màn kết quả. */
+  @Transactional
+  public GameSnapshot debugPrepareWinner(FinishRequest request) {
+    requireDebugTools();
+    Player player = debugPlayerInPlayingRoom(request == null ? null : request.playerId());
+    player.setTotalAnswered(Math.max(player.getTotalAnswered(), rules.getWinMinAnswers()));
+    player.setCompletedLaps(Math.max(player.getCompletedLaps(), rules.getWinMinLaps()));
+    player.setWinPoints(Math.max(player.getWinPoints(), 999));
+    Room room = player.getRoom();
+    GameSnapshot snapshot = snapshotBuilder.build(room);
+    broadcaster.gameUpdated(room.getCode(), snapshot);
+    return snapshot;
+  }
+
+  private void requireDebugTools() {
+    if (!rules.debugToolsEnabled) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Công cụ test đang tắt");
+    }
+  }
+
+  private Player debugPlayerInPlayingRoom(String playerKey) {
+    String key = playerKey == null ? "" : playerKey.trim();
+    Player player = key.isEmpty() ? null : playerRepository.findByPlayerKey(key).orElse(null);
+    Room room = player == null ? null : player.getRoom();
+    if (player == null || room == null || room.isFinished() || player.isLeft()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy người chơi trong ván đang chạy");
+    }
+    if (room.getStatus() != RoomStatus.PLAYING) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "Ván chưa bắt đầu hoặc đã kết thúc");
+    }
+    return player;
   }
 
   /**

@@ -16,6 +16,7 @@ import vn.careermap.web.dto.AnswerResponse;
 import vn.careermap.web.dto.BonusEffectRequest;
 import vn.careermap.web.dto.BonusEffectResponse;
 import vn.careermap.web.dto.DiceResponse;
+import vn.careermap.web.dto.DebugPointsRequest;
 import vn.careermap.web.dto.FinishRequest;
 import vn.careermap.web.dto.GameSnapshot;
 import vn.careermap.web.dto.RiasecDescription;
@@ -132,5 +133,16 @@ public class GameController {
   @PostMapping("/game/finish")
   public GameSnapshot finish(@RequestBody FinishRequest request) {
     return gameService.finish(request);
+  }
+
+  /** Debug tools are disabled unless explicitly enabled for local/staging. */
+  @PostMapping("/game/debug/points")
+  public GameSnapshot debugAdjustPoints(@RequestBody DebugPointsRequest request) {
+    return gameService.debugAdjustPoints(request);
+  }
+
+  @PostMapping("/game/debug/prepare-winner")
+  public GameSnapshot debugPrepareWinner(@RequestBody FinishRequest request) {
+    return gameService.debugPrepareWinner(request);
   }
 }
